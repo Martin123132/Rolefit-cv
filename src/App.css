@@ -25,6 +25,8 @@
 .question,
 .coach-item,
 .requirement-card,
+.pack-ready-strip,
+.pack-list-item,
 .confidence-meter {
   align-items: center;
   display: flex;
@@ -64,7 +66,9 @@ p {
 .generated-copy p,
 .answer-score p,
 .locked-panel p,
-.requirement-card p {
+.requirement-card p,
+.pack-card p,
+.pack-list-item p {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.55;
@@ -536,7 +540,7 @@ textarea {
   border-radius: 8px;
   display: grid;
   gap: 5px;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 5px;
 }
 
@@ -580,7 +584,8 @@ textarea {
 .generated-copy li,
 .coach-item,
 .question,
-.requirement-card {
+.requirement-card,
+.pack-list-item {
   font-size: 14px;
   line-height: 1.5;
 }
@@ -647,6 +652,89 @@ textarea {
 .coach-item svg,
 .panel-icon {
   color: var(--green);
+}
+
+.pack-panel {
+  align-content: start;
+}
+
+.pack-ready-strip {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  gap: 10px;
+  padding: 11px;
+}
+
+.pack-ready-strip.done {
+  background: #eff9f3;
+  border-color: #ccebd7;
+}
+
+.pack-ready-strip.next {
+  background: #fff8e8;
+  border-color: #f2cb77;
+}
+
+.pack-ready-strip strong,
+.pack-card strong,
+.pack-list-item strong {
+  display: block;
+}
+
+.pack-ready-strip span:last-child {
+  color: var(--muted);
+  display: block;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.pack-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pack-card {
+  background: #fbfcfb;
+  border: 1px solid #e0e8e5;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.pack-card > strong {
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.pack-list {
+  display: grid;
+  gap: 9px;
+}
+
+.pack-list-item {
+  align-items: start;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  gap: 10px;
+  padding: 10px;
+}
+
+.pack-list-item strong {
+  color: var(--ink);
+  margin-bottom: 2px;
+  text-transform: capitalize;
+}
+
+.story-card blockquote {
+  border-left: 3px solid var(--green);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0;
+  padding-left: 12px;
 }
 
 .confidence-meter {
@@ -757,7 +845,8 @@ textarea {
   .confidence-meter,
   .answer-score,
   .pending-panel,
-  .locked-panel {
+  .locked-panel,
+  .pack-grid {
     grid-template-columns: 1fr;
   }
 

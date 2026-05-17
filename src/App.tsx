@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import {
   ArrowRight,
   Brain,
@@ -20,9 +20,18 @@ import {
 import './App.css'
 
 type ProviderId = 'mock' | 'openai' | 'claude' | 'gemini'
-type TabId = 'tailor' | 'coach' | 'interview'
-type StepId = 'import' | 'analyse' | 'rewrite' | 'coach' | 'interview'
+type TabId = 'tailor' | 'coach' | 'interview' | 'pack'
+type StepId = 'import' | 'analyse' | 'rewrite' | 'coach' | 'interview' | 'pack'
 type StepStatus = 'done' | 'next' | 'blocked'
+
+type SavedDraft = {
+  confidence: number
+  cvText: string
+  jobText: string
+  model: string
+  practiceAnswer: string
+  provider: ProviderId
+}
 
 type EvidenceItem = {
   term: SkillTerm
@@ -58,6 +67,8 @@ const providers: Array<{ id: ProviderId; label: string; note: string }> = [
   { id: 'claude', label: 'Claude', note: 'Bring your key' },
   { id: 'gemini', label: 'Gemini', note: 'Bring your key' },
 ]
+
+const draftStorageKey = 'rolefit-cv-draft-v1'
 
 const modelOptions: Record<ProviderId, string[]> = {
   mock: ['Rolefit demo model', 'Fast local draft'],
@@ -121,12 +132,14 @@ const workflowSteps = [
   { id: 'rewrite', title: 'Rewrite honestly', description: 'Targeted CV draft', icon: Sparkles },
   { id: 'coach', title: 'Coach the story', description: 'Confidence and clarity', icon: UserRoundCheck },
   { id: 'interview', title: 'Rehearse interview', description: 'Questions from the CV', icon: Mic },
+  { id: 'pack', title: 'Prepare pack', description: 'Apply and interview notes', icon: Clipboard },
 ] satisfies Array<{ id: StepId; title: string; description: string; icon: LucideIcon }>
 
 const tabs: Array<{ id: TabId; label: string; icon: LucideIcon }> = [
   { id: 'tailor', label: 'Tailor CV', icon: Sparkles },
   { id: 'coach', label: 'Coach', icon: Brain },
   { id: 'interview', label: 'Mock interview', icon: Mic },
+  { id: 'pack', label: 'Application pack', icon: Clipboard },
 ]
 
 const statusLabels: Record<StepStatus, string> = {
@@ -185,6 +198,37 @@ function roleTitle(job: string) {
     .map((line) => line.trim())
     .find(Boolean)
   return title && title.length <= 64 ? title : 'this role'
+}
+
+function isProviderId(value: unknown): value is ProviderId {
+  return providers.some((provider) => provider.id === value)
+}
+
+function loadSavedDraft(): Partial<SavedDraft> {
+  if (typeof window === 'undefined') return {}
+
+  try {
+    const saved = window.localStorage.getItem(draftStorageKey)
+    if (!saved) return {}
+
+    const parsed = JSON.parse(saved) as Partial<SavedDraft>
+    const provider = isProviderId(parsed.provider) ? parsed.provider : undefined
+    const model =
+      provider && typeof parsed.model === 'string' && modelOptions[provider].includes(parsed.model)
+        ? parsed.model
+        : undefined
+
+    return {
+      confidence: typeof parsed.confidence === 'number' ? Math.min(100, Math.max(0, parsed.confidence)) : undefined,
+      cvText: typeof parsed.cvText === 'string' ? parsed.cvText : undefined,
+      jobText: typeof parsed.jobText === 'string' ? parsed.jobText : undefined,
+      model,
+      practiceAnswer: typeof parsed.practiceAnswer === 'string' ? parsed.practiceAnswer : undefined,
+      provider,
+    }
+  } catch {
+    return {}
+  }
 }
 
 function buildAnalysis(cv: string, job: string): Analysis {
@@ -271,6 +315,49 @@ function scoreAnswer(answer: string, analysis: Analysis, confidence: number) {
   return Math.min(100, lengthScore + evidenceScore + confidenceScore)
 }
 
+function applicationPackText(analysis: Analysis, practiceAnswer: string, confidence: number) {
+  return [
+    `Rolefit CV application pack: ${analysis.title}`,
+    '',
+    `Fit score: ${analysis.score}%`,
+    `Proof areas: ${phraseList(analysis.matched.slice(0, 6))}`,
+    analysis.gaps.length > 0 ? `Gaps to handle honestly: ${phraseList(analysis.gaps.slice(0, 4))}` : 'Gaps to handle honestly: none found in the mapped role language',
+    '',
+    'Targeted CV direction',
+    analysis.rewrite.summary,
+    ...analysis.rewrite.bullets.map((bullet) => `- ${bullet}`),
+    analysis.rewrite.note,
+    '',
+    'Interview anchor',
+    practiceAnswer.trim(),
+    '',
+    `Confidence check: ${confidence}%`,
+    'Before applying: read every claim out loud and remove anything you cannot explain calmly in an interview.',
+  ].join('\n')
+}
+
+async function writeTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Fall back below for browser surfaces that block the async clipboard API.
+    }
+  }
+
+  const textArea = document.createElement('textarea')
+  textArea.value = text
+  textArea.setAttribute('readonly', '')
+  textArea.style.left = '-9999px'
+  textArea.style.position = 'fixed'
+  document.body.appendChild(textArea)
+  textArea.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textArea)
+  return copied
+}
+
 function LockedPanel({ title, message, action }: { title: string; message: string; action: string }) {
   return (
     <div className="output-panel locked-panel">
@@ -288,17 +375,21 @@ function LockedPanel({ title, message, action }: { title: string; message: strin
 }
 
 function App() {
-  const [provider, setProvider] = useState<ProviderId>('mock')
-  const [model, setModel] = useState(modelOptions.mock[0])
+  const [savedDraft] = useState(() => loadSavedDraft())
+  const [provider, setProvider] = useState<ProviderId>(savedDraft.provider ?? 'mock')
+  const [model, setModel] = useState(
+    savedDraft.model ?? modelOptions[savedDraft.provider ?? 'mock'][0],
+  )
   const [apiKey, setApiKey] = useState('')
-  const [cvText, setCvText] = useState(seedCv)
-  const [jobText, setJobText] = useState(seedJob)
+  const [cvText, setCvText] = useState(savedDraft.cvText ?? seedCv)
+  const [jobText, setJobText] = useState(savedDraft.jobText ?? seedJob)
   const [activeTab, setActiveTab] = useState<TabId>('tailor')
   const [selectedQuestion, setSelectedQuestion] = useState(0)
   const [practiceAnswer, setPracticeAnswer] = useState(
-    'In customer service I handled delayed order problems by communicating clearly with customers, updating CRM notes, and working with warehouse, sales, and finance stakeholders. I used reporting to spot refund risk, documented the process, and trained new starters so the support team could stay consistent during busy weeks.',
+    savedDraft.practiceAnswer ??
+      'In customer service I handled delayed order problems by communicating clearly with customers, updating CRM notes, and working with warehouse, sales, and finance stakeholders. I used reporting to spot refund risk, documented the process, and trained new starters so the support team could stay consistent during busy weeks.',
   )
-  const [confidence, setConfidence] = useState(62)
+  const [confidence, setConfidence] = useState(savedDraft.confidence ?? 62)
   const [lastRun, setLastRun] = useState('Ready')
   const [copied, setCopied] = useState<string | null>(null)
   const [analysisRunKey, setAnalysisRunKey] = useState('')
@@ -306,6 +397,7 @@ function App() {
   const [rewriteDoneKey, setRewriteDoneKey] = useState('')
   const [coachDoneKey, setCoachDoneKey] = useState('')
   const [interviewDoneKey, setInterviewDoneKey] = useState('')
+  const [packDoneKey, setPackDoneKey] = useState('')
 
   const inputKey = useMemo(
     () => `${cvText.trim()}\n---rolefit-job---\n${jobText.trim()}`,
@@ -314,6 +406,14 @@ function App() {
   const analysis = useMemo(() => buildAnalysis(cvText, jobText), [cvText, jobText])
   const answerScore = useMemo(
     () => scoreAnswer(practiceAnswer, analysis, confidence),
+    [analysis, confidence, practiceAnswer],
+  )
+  const practiceKey = useMemo(
+    () => `${inputKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
+    [confidence, inputKey, practiceAnswer],
+  )
+  const packText = useMemo(
+    () => applicationPackText(analysis, practiceAnswer, confidence),
     [analysis, confidence, practiceAnswer],
   )
   const selectedProvider = providers.find((item) => item.id === provider) ?? providers[0]
@@ -325,9 +425,16 @@ function App() {
   const rewriteDone = evidenceReviewed && rewriteDoneKey === inputKey
   const coachDone = rewriteDone && coachDoneKey === inputKey
   const answerReady = practiceAnswer.trim().length >= 80 && answerScore >= 45
-  const interviewDone = coachDone && interviewDoneKey === inputKey
+  const interviewDone = coachDone && interviewDoneKey === practiceKey
+  const packDone = interviewDone && packDoneKey === practiceKey
   const visibleTab: TabId =
-    activeTab === 'interview' && !coachDone
+    activeTab === 'pack' && !interviewDone
+      ? coachDone
+        ? 'interview'
+        : rewriteDone
+          ? 'coach'
+          : 'tailor'
+      : activeTab === 'interview' && !coachDone
       ? rewriteDone
         ? 'coach'
         : 'tailor'
@@ -381,12 +488,34 @@ function App() {
               ? 'Answer a role-specific question and mark practice done.'
               : 'Complete coaching first.'
         }
+        if (step.id === 'pack') {
+          status = packDone ? 'done' : interviewDone ? 'next' : 'blocked'
+          detail = packDone
+            ? 'Application pack is ready to use.'
+            : interviewDone
+              ? 'Review the final pack before applying.'
+              : 'Finish interview practice first.'
+        }
 
         return { ...step, status, detail }
       }),
-    [coachDone, evidenceReviewed, hasCurrentAnalysis, importReady, interviewDone, rewriteDone],
+    [coachDone, evidenceReviewed, hasCurrentAnalysis, importReady, interviewDone, packDone, rewriteDone],
   )
   const nextStep = guidedSteps.find((step) => step.status === 'next') ?? guidedSteps.at(-1)!
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const draft: SavedDraft = {
+      confidence,
+      cvText,
+      jobText,
+      model,
+      practiceAnswer,
+      provider,
+    }
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft))
+  }, [confidence, cvText, jobText, model, practiceAnswer, provider])
 
   function handleProviderChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextProvider = event.target.value as ProviderId
@@ -414,15 +543,22 @@ function App() {
       '',
       analysis.rewrite.note,
     ].join('\n')
-    await navigator.clipboard?.writeText(rewriteText)
-    setCopied('rewrite')
+    const didCopy = await writeTextToClipboard(rewriteText)
+    setCopied(didCopy ? 'rewrite' : 'rewrite-error')
+    window.setTimeout(() => setCopied(null), 1400)
+  }
+
+  async function copyPack() {
+    const didCopy = await writeTextToClipboard(packText)
+    setCopied(didCopy ? 'pack' : 'pack-error')
     window.setTimeout(() => setCopied(null), 1400)
   }
 
   function canOpenTab(tab: TabId) {
     if (tab === 'tailor') return hasCurrentAnalysis
     if (tab === 'coach') return rewriteDone
-    return coachDone
+    if (tab === 'interview') return coachDone
+    return interviewDone
   }
 
   return (
@@ -699,7 +835,7 @@ function App() {
                 </div>
                 <button className="icon-button" onClick={copyRewrite} type="button">
                   {copied === 'rewrite' ? <Check size={17} /> : <Clipboard size={17} />}
-                  <span>{copied === 'rewrite' ? 'Copied' : 'Copy'}</span>
+                  <span>{copied === 'rewrite' ? 'Copied' : copied === 'rewrite-error' ? 'Copy unavailable' : 'Copy'}</span>
                 </button>
               </div>
               <div className="generated-copy">
@@ -807,11 +943,107 @@ function App() {
               <button
                 className="icon-button action-button"
                 disabled={!answerReady}
-                onClick={() => setInterviewDoneKey(inputKey)}
+                onClick={() => {
+                  setInterviewDoneKey(practiceKey)
+                  setActiveTab('pack')
+                }}
                 type="button"
               >
                 <Check size={17} aria-hidden="true" />
                 <span>{interviewDone ? 'Practice done' : 'Mark practice done'}</span>
+              </button>
+            </div>
+          )}
+
+          {visibleTab === 'pack' && (
+            <div className="output-panel pack-panel">
+              <div className="panel-head">
+                <div>
+                  <span className="section-kicker">Application pack</span>
+                  <h2>Ready-to-apply notes</h2>
+                </div>
+                <button className="icon-button" onClick={copyPack} type="button">
+                  {copied === 'pack' ? <Check size={17} /> : <Clipboard size={17} />}
+                  <span>{copied === 'pack' ? 'Copied' : copied === 'pack-error' ? 'Copy unavailable' : 'Copy pack'}</span>
+                </button>
+              </div>
+
+              <div className={`pack-ready-strip ${packDone ? 'done' : 'next'}`}>
+                <span className={`status-light ${packDone ? 'done' : 'next'}`} aria-hidden="true"></span>
+                <div>
+                  <strong>{packDone ? 'Pack ready' : 'Final check'}</strong>
+                  <span>
+                    {packDone
+                      ? 'The CV direction, proof, gap handling, and interview answer are bundled.'
+                      : 'Read this pack once before applying so the CV and interview story match.'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="pack-grid">
+                <section className="pack-card">
+                  <span className="section-kicker">Role fit</span>
+                  <strong>{analysis.score}% fit for {analysis.title}</strong>
+                  <p>
+                    {analysis.matched.length} proof areas mapped. {analysis.gaps.length} gap
+                    {analysis.gaps.length === 1 ? '' : 's'} need an honest answer.
+                  </p>
+                </section>
+
+                <section className="pack-card">
+                  <span className="section-kicker">CV lead</span>
+                  <strong>{phraseList(analysis.matched.slice(0, 3))}</strong>
+                  <p>{analysis.rewrite.summary}</p>
+                </section>
+              </div>
+
+              <section className="pack-card">
+                <span className="section-kicker">Proof lines</span>
+                <div className="pack-list">
+                  {analysis.evidence.slice(0, 4).map((item) => (
+                    <div className="pack-list-item" key={item.term}>
+                      <span className="status-light done" aria-hidden="true"></span>
+                      <p>
+                        <strong>{item.term}</strong>
+                        {item.line}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="pack-card">
+                <span className="section-kicker">Gap talk-track</span>
+                {analysis.gaps.length > 0 ? (
+                  <div className="pack-list">
+                    {analysis.gaps.slice(0, 4).map((term) => (
+                      <div className="pack-list-item" key={term}>
+                        <span className="status-light next" aria-hidden="true"></span>
+                        <p>
+                          <strong>{term}</strong>
+                          Connect nearby proof, name the gap calmly, and explain how you would close it.
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No obvious role-language gaps. Keep the claims specific and interview-safe.</p>
+                )}
+              </section>
+
+              <section className="pack-card story-card">
+                <span className="section-kicker">Interview anchor</span>
+                <blockquote>{practiceAnswer.trim()}</blockquote>
+                <p>Confidence: {confidence}%. Use this as the calm version, not a script to recite word for word.</p>
+              </section>
+
+              <button
+                className="icon-button action-button"
+                onClick={() => setPackDoneKey(practiceKey)}
+                type="button"
+              >
+                <Check size={17} aria-hidden="true" />
+                <span>{packDone ? 'Pack ready' : 'Mark pack ready'}</span>
               </button>
             </div>
           )}
