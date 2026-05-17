@@ -29,12 +29,20 @@ type EvidenceItem = {
   line: string
 }
 
+type RequirementEvidence = {
+  term: SkillTerm
+  status: 'strong' | 'missing'
+  evidence: string
+  nextAction: string
+}
+
 type Analysis = {
   title: string
   score: number
   matched: SkillTerm[]
   gaps: SkillTerm[]
   evidence: EvidenceItem[]
+  requirementMap: RequirementEvidence[]
   rewrite: {
     summary: string
     bullets: string[]
@@ -188,6 +196,18 @@ function buildAnalysis(cv: string, job: string): Analysis {
     term,
     line: sentenceForTerm(cv, term),
   }))
+  const requirementMap = jobTerms.map((term) => {
+    const hasEvidence = matched.includes(term)
+
+    return {
+      term,
+      status: hasEvidence ? 'strong' : 'missing',
+      evidence: hasEvidence ? sentenceForTerm(cv, term) : '',
+      nextAction: hasEvidence
+        ? `Use this proof when rewriting ${term}, and keep the example ready for interview.`
+        : `Add a truthful example for ${term}, connect nearby experience, or leave it out for now.`,
+    } satisfies RequirementEvidence
+  })
   const score =
     jobTerms.length === 0
       ? 40
@@ -200,6 +220,7 @@ function buildAnalysis(cv: string, job: string): Analysis {
     matched,
     gaps,
     evidence,
+    requirementMap,
     rewrite: {
       summary:
         matched.length > 0
@@ -275,12 +296,13 @@ function App() {
   const [activeTab, setActiveTab] = useState<TabId>('tailor')
   const [selectedQuestion, setSelectedQuestion] = useState(0)
   const [practiceAnswer, setPracticeAnswer] = useState(
-    'I would start with the customer problem, explain the action I took, then show the result and what I learned.',
+    'In customer service I handled delayed order problems by communicating clearly with customers, updating CRM notes, and working with warehouse, sales, and finance stakeholders. I used reporting to spot refund risk, documented the process, and trained new starters so the support team could stay consistent during busy weeks.',
   )
   const [confidence, setConfidence] = useState(62)
   const [lastRun, setLastRun] = useState('Ready')
   const [copied, setCopied] = useState<string | null>(null)
   const [analysisRunKey, setAnalysisRunKey] = useState('')
+  const [evidenceReviewedKey, setEvidenceReviewedKey] = useState('')
   const [rewriteDoneKey, setRewriteDoneKey] = useState('')
   const [coachDoneKey, setCoachDoneKey] = useState('')
   const [interviewDoneKey, setInterviewDoneKey] = useState('')
@@ -299,7 +321,8 @@ function App() {
   const hasJob = jobText.trim().length >= 60
   const importReady = hasCv && hasJob
   const hasCurrentAnalysis = importReady && analysisRunKey === inputKey
-  const rewriteDone = hasCurrentAnalysis && rewriteDoneKey === inputKey
+  const evidenceReviewed = hasCurrentAnalysis && evidenceReviewedKey === inputKey
+  const rewriteDone = evidenceReviewed && rewriteDoneKey === inputKey
   const coachDone = rewriteDone && coachDoneKey === inputKey
   const answerReady = practiceAnswer.trim().length >= 80 && answerScore >= 45
   const interviewDone = coachDone && interviewDoneKey === inputKey
@@ -323,20 +346,24 @@ function App() {
           detail = importReady ? 'CV and job advert are ready.' : 'Paste both inputs to begin.'
         }
         if (step.id === 'analyse') {
-          status = hasCurrentAnalysis ? 'done' : importReady ? 'next' : 'blocked'
-          detail = hasCurrentAnalysis
-            ? 'Fit analysis is current.'
-            : importReady
-              ? 'Run analysis to map proof against the role.'
-              : 'Add both documents first.'
+          status = evidenceReviewed ? 'done' : importReady ? 'next' : 'blocked'
+          detail = evidenceReviewed
+            ? 'Evidence map is confirmed.'
+            : hasCurrentAnalysis
+              ? 'Review and confirm the evidence map.'
+              : importReady
+                ? 'Run analysis to map proof against the role.'
+                : 'Add both documents first.'
         }
         if (step.id === 'rewrite') {
-          status = rewriteDone ? 'done' : hasCurrentAnalysis ? 'next' : 'blocked'
+          status = rewriteDone ? 'done' : evidenceReviewed ? 'next' : 'blocked'
           detail = rewriteDone
             ? 'Targeted rewrite has been marked done.'
-            : hasCurrentAnalysis
+            : evidenceReviewed
               ? 'Review the rewrite and mark it done.'
-              : 'Run analysis first.'
+              : hasCurrentAnalysis
+                ? 'Confirm the evidence map first.'
+                : 'Run analysis first.'
         }
         if (step.id === 'coach') {
           status = coachDone ? 'done' : rewriteDone ? 'next' : 'blocked'
@@ -357,7 +384,7 @@ function App() {
 
         return { ...step, status, detail }
       }),
-    [coachDone, hasCurrentAnalysis, importReady, interviewDone, rewriteDone],
+    [coachDone, evidenceReviewed, hasCurrentAnalysis, importReady, interviewDone, rewriteDone],
   )
   const nextStep = guidedSteps.find((step) => step.status === 'next') ?? guidedSteps.at(-1)!
 
@@ -576,6 +603,38 @@ function App() {
                   </div>
                 </div>
               </div>
+              <div className="evidence-map">
+                <div className="panel-head">
+                  <div>
+                    <span className="section-kicker">Requirement evidence map</span>
+                    <h3>Proof to use before rewriting</h3>
+                  </div>
+                  <button
+                    className="icon-button action-button"
+                    disabled={evidenceReviewed}
+                    onClick={() => {
+                      setEvidenceReviewedKey(inputKey)
+                      setActiveTab('tailor')
+                    }}
+                    type="button"
+                  >
+                    <Check size={17} aria-hidden="true" />
+                    <span>{evidenceReviewed ? 'Evidence map confirmed' : 'Confirm evidence map'}</span>
+                  </button>
+                </div>
+                <div className="requirement-list">
+                  {analysis.requirementMap.map((item) => (
+                    <article className={`requirement-card ${item.status}`} key={item.term}>
+                      <span className={`status-light ${item.status === 'strong' ? 'done' : 'next'}`} aria-hidden="true"></span>
+                      <div>
+                        <strong>{item.term}</strong>
+                        {item.status === 'strong' ? <p>{item.evidence}</p> : <p>No direct proof found in this CV yet.</p>}
+                        <em>{item.nextAction}</em>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="analysis-panel pending-panel">
@@ -623,7 +682,15 @@ function App() {
             />
           )}
 
-          {visibleTab === 'tailor' && hasCurrentAnalysis && (
+          {visibleTab === 'tailor' && hasCurrentAnalysis && !evidenceReviewed && (
+            <LockedPanel
+              action="Confirm the evidence map first."
+              message="The CV rewrite waits until the role requirements have been checked against real proof from the CV."
+              title="Targeted CV draft is locked"
+            />
+          )}
+
+          {visibleTab === 'tailor' && evidenceReviewed && (
             <div className="output-panel">
               <div className="panel-head">
                 <div>
