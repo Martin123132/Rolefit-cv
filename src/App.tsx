@@ -5,6 +5,7 @@ import {
   BriefcaseBusiness,
   Check,
   Clipboard,
+  Download,
   FileText,
   KeyRound,
   Lock,
@@ -644,6 +645,77 @@ function applicationPackText(
   ].join('\n')
 }
 
+function applicationPackMarkdown(
+  analysis: Analysis,
+  rewrite: RewriteDraft,
+  practiceAnswer: string,
+  confidence: number,
+  evidenceChoices: Record<string, EvidenceReviewChoice>,
+) {
+  const reviewLines = analysis.requirementMap.map((item) => {
+    const choice = evidenceChoices[item.term] ?? 'needs-proof'
+    return `- **${item.term}:** ${evidenceReviewLabels[choice]}`
+  })
+  const gapLine =
+    analysis.gaps.length > 0
+      ? phraseList(analysis.gaps.slice(0, 4))
+      : 'None found in the mapped role language'
+
+  return [
+    `# Rolefit CV Application Pack: ${analysis.title}`,
+    '',
+    `- **Fit score:** ${analysis.score}%`,
+    `- **Proof areas:** ${phraseList(analysis.matched.slice(0, 6))}`,
+    `- **Gaps to handle honestly:** ${gapLine}`,
+    '',
+    '## Targeted CV Direction',
+    '',
+    rewrite.summary,
+    '',
+    ...rewrite.bullets.map((bullet) => `- ${bullet}`),
+    '',
+    rewrite.note,
+    '',
+    '## Requirement Review',
+    '',
+    ...reviewLines,
+    '',
+    '## Interview Anchor',
+    '',
+    ...practiceAnswer
+      .trim()
+      .split('\n')
+      .map((line) => `> ${line}`),
+    '',
+    `**Confidence check:** ${confidence}%`,
+    '',
+    'Before applying: read every claim out loud and remove anything you cannot explain calmly in an interview.',
+  ].join('\n')
+}
+
+function filenameSlug(text: string) {
+  const slug = normalise(text).trim().replace(/\s+/g, '-').replace(/^-+|-+$/g, '').slice(0, 42)
+  return slug || 'application-pack'
+}
+
+function downloadTextFile(filename: string, text: string, mimeType: string) {
+  try {
+    const blob = new Blob([text], { type: `${mimeType};charset=utf-8` })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.download = filename
+    link.href = url
+    link.rel = 'noopener'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function writeTextToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
     try {
@@ -753,6 +825,7 @@ function App() {
   const [confidence, setConfidence] = useState(savedDraft.confidence ?? 62)
   const [lastRun, setLastRun] = useState('Ready')
   const [copied, setCopied] = useState<string | null>(null)
+  const [downloaded, setDownloaded] = useState<string | null>(null)
   const [analysisRun, setAnalysisRun] = useState<ProviderRunResult<Analysis> | null>(null)
   const [analysisRunKey, setAnalysisRunKey] = useState('')
   const [analysisError, setAnalysisError] = useState('')
@@ -837,6 +910,11 @@ function App() {
     () => applicationPackText(analysis, rewriteDraft, practiceAnswer, confidence, evidenceChoices),
     [analysis, confidence, evidenceChoices, practiceAnswer, rewriteDraft],
   )
+  const packMarkdown = useMemo(
+    () => applicationPackMarkdown(analysis, rewriteDraft, practiceAnswer, confidence, evidenceChoices),
+    [analysis, confidence, evidenceChoices, practiceAnswer, rewriteDraft],
+  )
+  const packFilenameBase = useMemo(() => `rolefit-cv-${filenameSlug(analysis.title)}`, [analysis.title])
   const answerReady = practiceAnswer.trim().length >= 80 && answerScore >= 45
   const interviewDone = coachDone && interviewDoneKey === practiceKey
   const packDone = interviewDone && packDoneKey === practiceKey
@@ -1210,6 +1288,16 @@ function App() {
     const didCopy = await writeTextToClipboard(packText)
     setCopied(didCopy ? 'pack' : 'pack-error')
     window.setTimeout(() => setCopied(null), 1400)
+  }
+
+  function downloadPack(format: 'md' | 'txt') {
+    const didDownload =
+      format === 'md'
+        ? downloadTextFile(`${packFilenameBase}.md`, packMarkdown, 'text/markdown')
+        : downloadTextFile(`${packFilenameBase}.txt`, packText, 'text/plain')
+
+    setDownloaded(didDownload ? format : `${format}-error`)
+    window.setTimeout(() => setDownloaded(null), 1400)
   }
 
   function canOpenTab(tab: TabId) {
@@ -1887,10 +1975,34 @@ function App() {
                   <span className="section-kicker">Application pack</span>
                   <h2>Ready-to-apply notes</h2>
                 </div>
-                <button className="icon-button" onClick={copyPack} type="button">
-                  {copied === 'pack' ? <Check size={17} /> : <Clipboard size={17} />}
-                  <span>{copied === 'pack' ? 'Copied' : copied === 'pack-error' ? 'Copy unavailable' : 'Copy pack'}</span>
-                </button>
+                <div className="pack-actions" aria-label="Application pack export actions">
+                  <button className="icon-button" onClick={copyPack} type="button">
+                    {copied === 'pack' ? <Check size={17} /> : <Clipboard size={17} />}
+                    <span>
+                      {copied === 'pack' ? 'Copied' : copied === 'pack-error' ? 'Copy unavailable' : 'Copy'}
+                    </span>
+                  </button>
+                  <button className="icon-button" onClick={() => downloadPack('md')} type="button">
+                    {downloaded === 'md' ? <Check size={17} /> : <Download size={17} />}
+                    <span>
+                      {downloaded === 'md'
+                        ? 'Saved .md'
+                        : downloaded === 'md-error'
+                          ? 'Save failed'
+                          : 'Download .md'}
+                    </span>
+                  </button>
+                  <button className="icon-button" onClick={() => downloadPack('txt')} type="button">
+                    {downloaded === 'txt' ? <Check size={17} /> : <FileText size={17} />}
+                    <span>
+                      {downloaded === 'txt'
+                        ? 'Saved .txt'
+                        : downloaded === 'txt-error'
+                          ? 'Save failed'
+                          : 'Download .txt'}
+                    </span>
+                  </button>
+                </div>
               </div>
 
               <div className={`pack-ready-strip ${packDone ? 'done' : 'next'}`}>

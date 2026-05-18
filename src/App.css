@@ -1156,6 +1156,17 @@ textarea {
   align-content: start;
 }
 
+.pack-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pack-actions .icon-button {
+  min-height: 36px;
+}
+
 .pack-ready-strip {
   border: 1px solid var(--line);
   border-radius: 8px;
