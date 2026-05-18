@@ -33,6 +33,16 @@ type ImportStatus = {
   message: string
   state: 'idle' | 'done' | 'error'
 }
+type RewriteDraft = {
+  bullets: string[]
+  note: string
+  summary: string
+}
+type ClaimSafety = {
+  detail: string
+  label: string
+  status: StepStatus
+}
 
 type SavedDraft = {
   confidence: number
@@ -400,8 +410,74 @@ function scoreAnswer(answer: string, analysis: Analysis, confidence: number) {
   return Math.min(100, lengthScore + evidenceScore + confidenceScore)
 }
 
+function rewriteFromAnalysis(analysis: Analysis): RewriteDraft {
+  return {
+    bullets: [...analysis.rewrite.bullets],
+    note: analysis.rewrite.note,
+    summary: analysis.rewrite.summary,
+  }
+}
+
+function claimSafetyForText(
+  text: string,
+  analysis: Analysis,
+  evidenceChoices: Record<string, EvidenceReviewChoice>,
+): ClaimSafety {
+  const matchedTerms = analysis.requirementMap.filter((item) => textContains(text, item.term))
+
+  if (matchedTerms.length === 0) {
+    return {
+      detail: 'No mapped requirement is named here yet.',
+      label: 'Needs proof',
+      status: 'next',
+    }
+  }
+
+  if (matchedTerms.some((item) => evidenceChoices[item.term] === 'do-not-claim')) {
+    return {
+      detail: 'This mentions a requirement marked do not claim.',
+      label: 'Do not claim',
+      status: 'blocked',
+    }
+  }
+
+  if (matchedTerms.some((item) => evidenceChoices[item.term] !== 'true')) {
+    return {
+      detail: 'This mentions a requirement that still needs proof.',
+      label: 'Needs proof',
+      status: 'next',
+    }
+  }
+
+  return {
+    detail: 'Backed by the reviewed evidence map.',
+    label: 'Backed by evidence',
+    status: 'done',
+  }
+}
+
+function rewriteSafetyItems(
+  rewrite: RewriteDraft,
+  analysis: Analysis,
+  evidenceChoices: Record<string, EvidenceReviewChoice>,
+) {
+  return [
+    { id: 'summary', label: 'Summary', text: rewrite.summary },
+    ...rewrite.bullets.map((bullet, index) => ({
+      id: `bullet-${index}`,
+      label: `Bullet ${index + 1}`,
+      text: bullet,
+    })),
+    { id: 'note', label: 'Note', text: rewrite.note },
+  ].map((item) => ({
+    ...item,
+    safety: claimSafetyForText(item.text, analysis, evidenceChoices),
+  }))
+}
+
 function applicationPackText(
   analysis: Analysis,
+  rewrite: RewriteDraft,
   practiceAnswer: string,
   confidence: number,
   evidenceChoices: Record<string, EvidenceReviewChoice>,
@@ -419,9 +495,9 @@ function applicationPackText(
     analysis.gaps.length > 0 ? `Gaps to handle honestly: ${phraseList(analysis.gaps.slice(0, 4))}` : 'Gaps to handle honestly: none found in the mapped role language',
     '',
     'Targeted CV direction',
-    analysis.rewrite.summary,
-    ...analysis.rewrite.bullets.map((bullet) => `- ${bullet}`),
-    analysis.rewrite.note,
+    rewrite.summary,
+    ...rewrite.bullets.map((bullet) => `- ${bullet}`),
+    rewrite.note,
     '',
     'Requirement review',
     ...reviewLines,
@@ -557,6 +633,8 @@ function App() {
   const [coachDoneKey, setCoachDoneKey] = useState('')
   const [interviewDoneKey, setInterviewDoneKey] = useState('')
   const [packDoneKey, setPackDoneKey] = useState('')
+  const [editedRewrite, setEditedRewrite] = useState<RewriteDraft | null>(null)
+  const [editedRewriteKey, setEditedRewriteKey] = useState('')
   const knownModelSelected = modelOptions[provider].includes(model)
   const usingCustomModel = !knownModelSelected
   const modelSelectValue = knownModelSelected ? model : customModelOption
@@ -599,15 +677,36 @@ function App() {
   )
   const evidenceReviewed =
     hasCurrentAnalysis && allRequirementsReviewed && evidenceReviewedKey === evidenceReviewKey
-  const rewriteDone = evidenceReviewed && rewriteDoneKey === evidenceReviewKey
-  const coachDone = rewriteDone && coachDoneKey === evidenceReviewKey
+  const generatedRewrite = useMemo(() => rewriteFromAnalysis(analysis), [analysis])
+  const rewriteDraft =
+    hasCurrentAnalysis && editedRewriteKey === evidenceReviewKey && editedRewrite ? editedRewrite : generatedRewrite
+  const rewriteSafety = useMemo(
+    () => rewriteSafetyItems(rewriteDraft, analysis, evidenceChoices),
+    [analysis, evidenceChoices, rewriteDraft],
+  )
+  const rewriteBlockedCount = rewriteSafety.filter((item) => item.safety.status === 'blocked').length
+  const rewriteWarningCount = rewriteSafety.filter((item) => item.safety.status === 'next').length
+  const rewriteHasBlockedClaim = evidenceReviewed && rewriteBlockedCount > 0
+  const rewriteReviewKey = useMemo(
+    () =>
+      [
+        evidenceReviewKey,
+        '---rolefit-edited-rewrite---',
+        rewriteDraft.summary.trim(),
+        ...rewriteDraft.bullets.map((bullet) => bullet.trim()),
+        rewriteDraft.note.trim(),
+      ].join('\n'),
+    [evidenceReviewKey, rewriteDraft],
+  )
+  const rewriteDone = evidenceReviewed && !rewriteHasBlockedClaim && rewriteDoneKey === rewriteReviewKey
+  const coachDone = rewriteDone && coachDoneKey === rewriteReviewKey
   const practiceKey = useMemo(
-    () => `${evidenceReviewKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
-    [confidence, evidenceReviewKey, practiceAnswer],
+    () => `${rewriteReviewKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
+    [confidence, practiceAnswer, rewriteReviewKey],
   )
   const packText = useMemo(
-    () => applicationPackText(analysis, practiceAnswer, confidence, evidenceChoices),
-    [analysis, confidence, evidenceChoices, practiceAnswer],
+    () => applicationPackText(analysis, rewriteDraft, practiceAnswer, confidence, evidenceChoices),
+    [analysis, confidence, evidenceChoices, practiceAnswer, rewriteDraft],
   )
   const answerReady = practiceAnswer.trim().length >= 80 && answerScore >= 45
   const interviewDone = coachDone && interviewDoneKey === practiceKey
@@ -684,7 +783,9 @@ function App() {
           detail = rewriteDone
             ? 'Targeted rewrite has been marked done.'
             : evidenceReviewed
-              ? 'Review the rewrite and mark it done.'
+              ? rewriteHasBlockedClaim
+                ? 'Resolve red claim warnings before coaching.'
+                : 'Review the rewrite and mark it done.'
               : hasCurrentAnalysis
                 ? 'Confirm the evidence map first.'
                 : 'Run analysis first.'
@@ -726,6 +827,7 @@ function App() {
       packDone,
       requirementTotal,
       reviewedRequirementCount,
+      rewriteHasBlockedClaim,
       rewriteDone,
     ],
   )
@@ -764,6 +866,22 @@ function App() {
       [term]: choice,
     }))
     setEvidenceReviewedKey('')
+    setRewriteDoneKey('')
+    setCoachDoneKey('')
+    setInterviewDoneKey('')
+    setPackDoneKey('')
+  }
+
+  function updateRewriteDraft(updater: (current: RewriteDraft) => RewriteDraft) {
+    setEditedRewrite((current) => {
+      const base = current && editedRewriteKey === evidenceReviewKey ? current : generatedRewrite
+      return updater(base)
+    })
+    setEditedRewriteKey(evidenceReviewKey)
+    setRewriteDoneKey('')
+    setCoachDoneKey('')
+    setInterviewDoneKey('')
+    setPackDoneKey('')
   }
 
   async function handleImportFile(target: ImportTarget, file: File) {
@@ -864,6 +982,12 @@ function App() {
       setAnalysisRunKey(analysisKey)
       setEvidenceChoices({})
       setEvidenceReviewedKey('')
+      setEditedRewrite(null)
+      setEditedRewriteKey('')
+      setRewriteDoneKey('')
+      setCoachDoneKey('')
+      setInterviewDoneKey('')
+      setPackDoneKey('')
       setActiveTab('tailor')
       setLastRun(
         `Updated ${new Date().toLocaleTimeString([], {
@@ -880,11 +1004,11 @@ function App() {
 
   async function copyRewrite() {
     const rewriteText = [
-      analysis.rewrite.summary,
+      rewriteDraft.summary,
       '',
-      ...analysis.rewrite.bullets.map((bullet) => `- ${bullet}`),
+      ...rewriteDraft.bullets.map((bullet) => `- ${bullet}`),
       '',
-      analysis.rewrite.note,
+      rewriteDraft.note,
     ].join('\n')
     const didCopy = await writeTextToClipboard(rewriteText)
     setCopied(didCopy ? 'rewrite' : 'rewrite-error')
@@ -1172,6 +1296,12 @@ function App() {
                     disabled={evidenceReviewed || !allRequirementsReviewed}
                     onClick={() => {
                       setEvidenceReviewedKey(evidenceReviewKey)
+                      setEditedRewrite(rewriteFromAnalysis(analysis))
+                      setEditedRewriteKey(evidenceReviewKey)
+                      setRewriteDoneKey('')
+                      setCoachDoneKey('')
+                      setInterviewDoneKey('')
+                      setPackDoneKey('')
                       setActiveTab('tailor')
                     }}
                     type="button"
@@ -1302,25 +1432,99 @@ function App() {
                   <span>{copied === 'rewrite' ? 'Copied' : copied === 'rewrite-error' ? 'Copy unavailable' : 'Copy'}</span>
                 </button>
               </div>
-              <div className="generated-copy">
-                <p>{analysis.rewrite.summary}</p>
-                <ul>
-                  {analysis.rewrite.bullets.map((bullet) => (
-                    <li key={bullet}>{bullet}</li>
+              <div className="rewrite-editor">
+                <label className="rewrite-field">
+                  <span>Summary</span>
+                  <textarea
+                    aria-label="Rewrite summary"
+                    onChange={(event) =>
+                      updateRewriteDraft((current) => ({
+                        ...current,
+                        summary: event.target.value,
+                      }))
+                    }
+                    rows={4}
+                    value={rewriteDraft.summary}
+                  />
+                </label>
+
+                <div className="rewrite-bullet-list">
+                  {rewriteDraft.bullets.map((bullet, index) => (
+                    <label className="rewrite-field" key={`bullet-${index}`}>
+                      <span>Bullet {index + 1}</span>
+                      <textarea
+                        aria-label={`Rewrite bullet ${index + 1}`}
+                        onChange={(event) =>
+                          updateRewriteDraft((current) => ({
+                            ...current,
+                            bullets: current.bullets.map((item, itemIndex) =>
+                              itemIndex === index ? event.target.value : item,
+                            ),
+                          }))
+                        }
+                        rows={3}
+                        value={bullet}
+                      />
+                    </label>
                   ))}
-                </ul>
-                <p>{analysis.rewrite.note}</p>
+                </div>
+
+                <label className="rewrite-field">
+                  <span>Positioning note</span>
+                  <textarea
+                    aria-label="Rewrite positioning note"
+                    onChange={(event) =>
+                      updateRewriteDraft((current) => ({
+                        ...current,
+                        note: event.target.value,
+                      }))
+                    }
+                    rows={3}
+                    value={rewriteDraft.note}
+                  />
+                </label>
+              </div>
+
+              <div className="claim-safety-panel" aria-label="Evidence warning lights" aria-live="polite">
+                <div className="claim-safety-head">
+                  <div>
+                    <span className="section-kicker">Claim safety</span>
+                    <strong>
+                      {rewriteBlockedCount > 0
+                        ? `${rewriteBlockedCount} red claim${rewriteBlockedCount === 1 ? '' : 's'} to fix`
+                        : rewriteWarningCount > 0
+                          ? `${rewriteWarningCount} orange claim${rewriteWarningCount === 1 ? '' : 's'} need proof`
+                          : 'Every claim is backed by reviewed evidence'}
+                    </strong>
+                  </div>
+                  <span className={`status-light ${rewriteHasBlockedClaim ? 'blocked' : rewriteWarningCount > 0 ? 'next' : 'done'}`} aria-hidden="true"></span>
+                </div>
+                <div className="claim-safety-list">
+                  {rewriteSafety.map((item) => (
+                    <div className={`claim-safety-item ${item.safety.status}`} key={item.id}>
+                      <span className={`status-light ${item.safety.status}`} aria-hidden="true"></span>
+                      <div>
+                        <strong>{item.label}</strong>
+                        <span>{item.safety.label}</span>
+                        <em>{item.safety.detail}</em>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
               <button
                 className="icon-button action-button"
+                disabled={rewriteHasBlockedClaim}
                 onClick={() => {
-                  setRewriteDoneKey(evidenceReviewKey)
+                  setRewriteDoneKey(rewriteReviewKey)
                   setActiveTab('coach')
                 }}
                 type="button"
               >
                 <Check size={17} aria-hidden="true" />
-                <span>{rewriteDone ? 'Rewrite done' : 'Mark rewrite done'}</span>
+                <span>
+                  {rewriteDone ? 'Rewrite done' : rewriteHasBlockedClaim ? 'Resolve red claims' : 'Mark rewrite done'}
+                </span>
               </button>
             </div>
           )}
@@ -1356,7 +1560,7 @@ function App() {
               <button
                 className="icon-button action-button"
                 onClick={() => {
-                  setCoachDoneKey(evidenceReviewKey)
+                  setCoachDoneKey(rewriteReviewKey)
                   setActiveTab('interview')
                 }}
                 type="button"
@@ -1457,7 +1661,7 @@ function App() {
                 <section className="pack-card">
                   <span className="section-kicker">CV lead</span>
                   <strong>{phraseList(analysis.matched.slice(0, 3))}</strong>
-                  <p>{analysis.rewrite.summary}</p>
+                  <p>{rewriteDraft.summary}</p>
                 </section>
               </div>
 

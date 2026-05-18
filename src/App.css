@@ -97,7 +97,8 @@ p {
 .section-kicker,
 .rail-heading,
 .confidence-meter span,
-.answer-box span {
+.answer-box span,
+.rewrite-field span {
   color: var(--muted-strong);
   font-size: 12px;
   font-weight: 720;
@@ -723,9 +724,103 @@ textarea {
 .coach-item,
 .question,
 .requirement-card,
+.claim-safety-item,
 .pack-list-item {
   font-size: 14px;
   line-height: 1.5;
+}
+
+.rewrite-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.rewrite-field {
+  display: grid;
+  gap: 7px;
+}
+
+.rewrite-field textarea {
+  line-height: 1.45;
+  min-height: 108px;
+}
+
+.rewrite-bullet-list {
+  display: grid;
+  gap: 10px;
+}
+
+.claim-safety-panel {
+  background: #fbfcfb;
+  border: 1px solid #e0e8e5;
+  border-radius: 8px;
+  display: grid;
+  gap: 11px;
+  padding: 12px;
+}
+
+.claim-safety-head,
+.claim-safety-item {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.claim-safety-head {
+  justify-content: space-between;
+}
+
+.claim-safety-head strong,
+.claim-safety-item strong,
+.claim-safety-item span,
+.claim-safety-item em {
+  display: block;
+}
+
+.claim-safety-head strong {
+  font-size: 14px;
+  margin-top: 3px;
+}
+
+.claim-safety-list {
+  display: grid;
+  gap: 8px;
+}
+
+.claim-safety-item {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 10px;
+}
+
+.claim-safety-item.done {
+  background: #eff9f3;
+  border-color: #ccebd7;
+}
+
+.claim-safety-item.next {
+  background: #fff8e8;
+  border-color: #f2cb77;
+}
+
+.claim-safety-item.blocked {
+  background: #fff0ef;
+  border-color: #efc2bd;
+}
+
+.claim-safety-item span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 760;
+  margin-top: 1px;
+  text-transform: uppercase;
+}
+
+.claim-safety-item em {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+  margin-top: 2px;
 }
 
 .evidence-map {
