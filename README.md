@@ -2,19 +2,68 @@
 
 Rolefit CV is a job-specific CV writing and interview coaching app.
 
-The product rule is simple: the UI teaches the user what to do next.
+Most CV tools produce polished generic wording. Rolefit is built around a different rule: a CV should prove the exact job being applied for, and the person should be able to talk confidently about every claim in an interview.
+
+## Product Idea
+
+Rolefit helps a user move through one application at a time:
+
+1. Add a CV and a job advert.
+2. Map the job requirements against real evidence in the CV.
+3. Rewrite the CV without inventing claims.
+4. Coach the user on proof, gaps, and confidence.
+5. Rehearse interview questions based on the CV and job.
+6. Export an application pack and interview pack.
+
+The app uses a traffic-light workflow so the interface teaches the process:
 
 - Green means this part is done.
 - Orange means do this next.
 - Red means this part is locked until the previous step is done.
 
-The current app runs locally and supports bring-your-own-key live analysis for OpenAI, Claude, and Gemini through a local proxy. API keys are held in browser session state for the request and are not saved to local draft storage. Local mock mode still works without a key.
+## Current Features
 
-Live provider calls use the same Rolefit analysis contract as the local mock. If a live request fails, the app falls back to local analysis so the workflow can continue.
+- Local one-click Windows launcher.
+- CV and job advert text editors.
+- `.txt`, `.md`, and `.markdown` import for CV and job inputs.
+- Local mock analysis that works without an API key.
+- Provider selector for OpenAI, Claude, and Gemini.
+- Session-only bring-your-own-key field.
+- Local provider proxy for live analysis requests.
+- Provider contract card showing provider, model, contract version, and key state.
+- Evidence map for job requirements.
+- Claim safety review before rewriting.
+- Editable targeted CV rewrite.
+- Coaching prompts for proof, gaps, and confidence.
+- Interview question bank generated from the analysed CV/job fit.
+- STAR answer builder.
+- Answer feedback lights for evidence, relevance, result, gap honesty, and confidence.
+- Downloadable application pack and interview pack in Markdown or plain text.
 
-The interview coach now turns each analysed CV into a question bank, STAR answer builder, answer feedback lights, and a downloadable interview pack. The goal is to help the person practise the evidence behind the CV, not just produce better-looking wording.
+## AI Providers And Keys
 
-## One-click run on Windows
+Rolefit currently supports:
+
+- Local mock
+- OpenAI
+- Claude
+- Gemini
+
+The local mock sends no request and needs no key.
+
+For OpenAI, Claude, and Gemini, the app uses a local Vite proxy endpoint so provider requests do not run directly from browser code. The API key is held in browser session state for the request and is not saved to local draft storage.
+
+If a live provider request fails, Rolefit falls back to local analysis so the workflow can continue.
+
+## Privacy Notes
+
+- Imported files are read client-side.
+- Imported text is not uploaded just by importing it.
+- API keys are not saved in local draft storage.
+- Local draft storage can save CV text, job text, provider/model choice, and practice notes so the user does not lose work.
+- Live provider analysis sends the CV and job advert to the selected AI provider when the user runs analysis with a session key present.
+
+## One-Click Run On Windows
 
 1. Install [Node.js LTS](https://nodejs.org/en/download) if needed.
 2. Download or clone this repo.
@@ -26,16 +75,54 @@ Close the launcher window, or press `Ctrl+C`, to stop the app.
 
 Do not open `index.html` directly. This is a Vite app and needs the launcher or terminal command below.
 
-## Terminal run
+## Terminal Run
 
 ```bash
 npm install
 npm start
 ```
 
-## Checks
+The app usually starts at:
+
+```text
+http://127.0.0.1:5317/
+```
+
+If that port is busy, the launcher chooses another free local port and prints the URL.
+
+## Development Checks
 
 ```bash
 npm run lint
 npm run build
 ```
+
+## Tech Stack
+
+- React
+- TypeScript
+- Vite
+- Local Vite middleware for provider proxy requests
+- Lucide React icons
+
+## Current Limitations
+
+- PDF and DOCX import are not implemented yet.
+- Live provider support is still early and should be hardened before wider use.
+- The app is local-first; hosted deployment and account systems are not part of this stage.
+- The analysis is a production foundation, not a final career-advice guarantee.
+
+## Roadmap
+
+Planned next slices:
+
+- PDF and DOCX import.
+- Stronger provider error handling and request limits.
+- Better live-provider prompt evaluation.
+- More interview modes, including follow-up questions.
+- Saved application history.
+- Cleaner packaged desktop/local release.
+
+## Project Direction
+
+Rolefit should stay easy to use. The user should not need to understand prompting, model settings, or CV theory to move forward. The app should guide them step by step, keep claims honest, and help them practise the person behind the CV.
