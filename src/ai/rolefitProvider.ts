@@ -36,7 +36,7 @@ export type RolefitPromptContract = {
   version: 'rolefit.analysis.v1'
 }
 
-export type ProviderRunMode = 'local-mock' | 'provider-needs-key' | 'provider-contract'
+export type ProviderRunMode = 'local-mock' | 'provider-needs-key' | 'provider-contract' | 'provider-live'
 
 export type ProviderRunResult<TAnalysis extends RolefitAnalysisSnapshot = RolefitAnalysisSnapshot> = {
   analysis: TAnalysis
@@ -59,6 +59,15 @@ type ProviderRunRequest<TAnalysis extends RolefitAnalysisSnapshot> = {
   jobText: string
   model: string
   provider: ProviderId
+}
+
+type LiveAnalysisResponse<TAnalysis extends RolefitAnalysisSnapshot> = {
+  analysis?: TAnalysis
+  error?: string
+  mode?: ProviderRunMode
+  statusDetail?: string
+  statusTitle?: string
+  transportLabel?: string
 }
 
 const providerLabels: Record<ProviderId, string> = {
@@ -131,6 +140,50 @@ export function buildRolefitPromptContract(cvText: string, jobText: string): Rol
   }
 }
 
+async function runOpenAiProxy<TAnalysis extends RolefitAnalysisSnapshot>({
+  apiKey,
+  contract,
+  cvText,
+  jobText,
+  model,
+}: {
+  apiKey: string
+  contract: RolefitPromptContract
+  cvText: string
+  jobText: string
+  model: string
+}) {
+  const response = await fetch('/api/analyse', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      apiKey,
+      cvText,
+      jobText,
+      model,
+      provider: 'openai',
+      systemPrompt: contract.systemPrompt,
+      userPrompt: contract.userPrompt,
+    }),
+  })
+  const payload = (await response.json().catch(() => ({}))) as LiveAnalysisResponse<TAnalysis>
+
+  if (!response.ok || !payload.analysis) {
+    throw new Error(payload.error ?? 'The OpenAI proxy could not return a valid Rolefit analysis.')
+  }
+
+  return {
+    analysis: payload.analysis,
+    mode: payload.mode ?? 'provider-live',
+    statusDetail:
+      payload.statusDetail ?? 'OpenAI returned structured JSON through the local Rolefit proxy. The session key was not saved.',
+    statusTitle: payload.statusTitle ?? 'OpenAI live analysis',
+    transportLabel: payload.transportLabel ?? 'Live OpenAI',
+  }
+}
+
 export async function runRolefitProvider<TAnalysis extends RolefitAnalysisSnapshot>({
   analysis,
   apiKey,
@@ -160,6 +213,30 @@ export async function runRolefitProvider<TAnalysis extends RolefitAnalysisSnapsh
 
   const hasSessionKey = apiKey.trim().length > 0
 
+  if (provider === 'openai' && hasSessionKey) {
+    const liveRun = await runOpenAiProxy<TAnalysis>({
+      apiKey,
+      contract,
+      cvText,
+      jobText,
+      model,
+    })
+
+    return {
+      analysis: liveRun.analysis,
+      contract,
+      generatedAt: new Date().toISOString(),
+      keyState: 'present',
+      mode: liveRun.mode,
+      model,
+      providerId: provider,
+      providerLabel,
+      statusDetail: liveRun.statusDetail,
+      statusTitle: liveRun.statusTitle,
+      transportLabel: liveRun.transportLabel,
+    }
+  }
+
   return {
     analysis,
     contract,
@@ -170,7 +247,7 @@ export async function runRolefitProvider<TAnalysis extends RolefitAnalysisSnapsh
     providerId: provider,
     providerLabel,
     statusDetail: hasSessionKey
-      ? `${providerLabel} is selected and a session key is present. This demo keeps network transport offline until a backend proxy is added, so the local engine is validating the provider prompt contract.`
+      ? `${providerLabel} is selected and a session key is present. This provider adapter is not live yet, so the local engine is validating the prompt contract.`
       : `${providerLabel} is selected, but no session key is present. This run uses the local engine while preparing the exact provider prompt contract.`,
     statusTitle: `${providerLabel} adapter contract`,
     transportLabel: hasSessionKey ? 'Contract ready' : 'Needs session key',

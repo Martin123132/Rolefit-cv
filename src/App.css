@@ -619,7 +619,8 @@ textarea {
   padding: 13px;
 }
 
-.provider-run-card.local-mock {
+.provider-run-card.local-mock,
+.provider-run-card.provider-live {
   background: #f0faf4;
   border-color: #cfecd9;
 }

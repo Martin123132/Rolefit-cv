@@ -38,12 +38,12 @@ type SavedDraft = {
 }
 
 type EvidenceItem = {
-  term: SkillTerm
+  term: string
   line: string
 }
 
 type RequirementEvidence = {
-  term: SkillTerm
+  term: string
   status: 'strong' | 'missing'
   evidence: string
   nextAction: string
@@ -52,8 +52,8 @@ type RequirementEvidence = {
 type Analysis = {
   title: string
   score: number
-  matched: SkillTerm[]
-  gaps: SkillTerm[]
+  matched: string[]
+  gaps: string[]
   evidence: EvidenceItem[]
   requirementMap: RequirementEvidence[]
   rewrite: {
@@ -76,7 +76,7 @@ const draftStorageKey = 'rolefit-cv-draft-v1'
 
 const modelOptions: Record<ProviderId, string[]> = {
   mock: ['Rolefit demo model', 'Fast local draft'],
-  openai: ['GPT model', 'GPT reasoning model', 'Custom OpenAI model'],
+  openai: ['gpt-5', 'gpt-4o', 'gpt-4o-mini'],
   claude: ['Claude model', 'Claude fast model', 'Custom Claude model'],
   gemini: ['Gemini model', 'Gemini fast model', 'Custom Gemini model'],
 }
@@ -312,7 +312,9 @@ function buildAnalysis(cv: string, job: string): Analysis {
 
 function scoreAnswer(answer: string, analysis: Analysis, confidence: number) {
   const answerTerms = extractTerms(answer)
-  const termHits = analysis.matched.filter((term) => answerTerms.includes(term)).length
+  const termHits = analysis.matched.filter(
+    (term) => answerTerms.includes(term as SkillTerm) || textContains(answer, term),
+  ).length
   const lengthScore = Math.min(35, Math.floor(answer.trim().length / 14))
   const evidenceScore = Math.min(40, termHits * 12)
   const confidenceScore = Math.round(confidence / 5)
