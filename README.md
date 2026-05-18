@@ -32,6 +32,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Local provider proxy for live analysis requests.
 - Provider contract card showing provider, model, contract version, and key state.
 - Live-provider guardrails for request size, timeout, and local fallback.
+- Analysis quality gate that checks provider output for completeness, CV grounding, role coverage, gap honesty, rewrite safety, and interview usefulness.
 - Evidence map for job requirements.
 - Claim safety review before rewriting.
 - Editable targeted CV rewrite.
@@ -57,6 +58,8 @@ For OpenAI, Claude, and Gemini, the app uses a local Vite proxy endpoint so prov
 Live-provider requests are capped at 64 KB of CV text and 64 KB of job text. The local proxy also protects the app with a 45 second provider timeout and clearer messages for rejected keys, rate limits, request-shape problems, and provider outages.
 
 If a live provider request fails, Rolefit falls back to local analysis so the workflow can continue.
+
+Every analysis run also passes through a local quality gate. This does not call an AI provider. It checks whether the returned output is complete, grounded in the CV text, mapped to the job advert, honest about gaps, safe for rewriting, and useful for interview practice.
 
 ## Privacy Notes
 
@@ -122,7 +125,7 @@ npm run build
 Planned next slices:
 
 - OCR support for scanned PDFs.
-- Better live-provider prompt evaluation.
+- Side-by-side provider comparison once live keys are available.
 - More interview modes, including follow-up questions.
 - Saved application history.
 - Cleaner packaged desktop/local release.

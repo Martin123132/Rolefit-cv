@@ -24,6 +24,7 @@ import {
   type ProviderId,
   type ProviderRunResult,
 } from './ai/rolefitProvider'
+import { qualityGateForAnalysis } from './analysis/qualityGate'
 import {
   extractImportedDocumentText,
   importAccept,
@@ -1237,6 +1238,10 @@ function App() {
     () => answerFeedbackFor(practiceAnswer, analysis, confidence, interviewStar),
     [analysis, confidence, interviewStar, practiceAnswer],
   )
+  const qualityGate = useMemo(
+    () => qualityGateForAnalysis({ analysis, cvText, jobText }),
+    [analysis, cvText, jobText],
+  )
   const answerScore = useMemo(
     () => scoreAnswer(practiceAnswer, analysis, confidence, interviewStar),
     [analysis, confidence, interviewStar, practiceAnswer],
@@ -2104,6 +2109,28 @@ function App() {
                   </div>
                 </div>
               )}
+              <div className={`quality-gate-card ${qualityGate.status}`}>
+                <div className="quality-gate-head">
+                  <div>
+                    <span className="section-kicker">Analysis quality gate</span>
+                    <h3>{qualityGate.title}</h3>
+                  </div>
+                  <span className="quality-score-pill">{qualityGate.score}% checked</span>
+                </div>
+                <p>{qualityGate.detail}</p>
+                <div className="quality-gate-list" aria-label="Analysis quality checks">
+                  {qualityGate.items.map((item) => (
+                    <div className={`quality-gate-item ${item.status}`} key={item.id}>
+                      <span className={`status-light ${item.status}`} aria-hidden="true"></span>
+                      <div>
+                        <strong>{item.label}</strong>
+                        <span>{statusLabels[item.status]} - {item.metric}</span>
+                        <p>{item.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
               <div className="evidence-map">
                 <div className="panel-head">
                   <div>
