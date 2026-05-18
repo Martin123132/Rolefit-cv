@@ -140,18 +140,22 @@ export function buildRolefitPromptContract(cvText: string, jobText: string): Rol
   }
 }
 
-async function runOpenAiProxy<TAnalysis extends RolefitAnalysisSnapshot>({
+async function runLiveProviderProxy<TAnalysis extends RolefitAnalysisSnapshot>({
   apiKey,
   contract,
   cvText,
   jobText,
   model,
+  provider,
+  providerLabel,
 }: {
   apiKey: string
   contract: RolefitPromptContract
   cvText: string
   jobText: string
   model: string
+  provider: Exclude<ProviderId, 'mock'>
+  providerLabel: string
 }) {
   const response = await fetch('/api/analyse', {
     method: 'POST',
@@ -163,7 +167,7 @@ async function runOpenAiProxy<TAnalysis extends RolefitAnalysisSnapshot>({
       cvText,
       jobText,
       model,
-      provider: 'openai',
+      provider,
       systemPrompt: contract.systemPrompt,
       userPrompt: contract.userPrompt,
     }),
@@ -171,16 +175,17 @@ async function runOpenAiProxy<TAnalysis extends RolefitAnalysisSnapshot>({
   const payload = (await response.json().catch(() => ({}))) as LiveAnalysisResponse<TAnalysis>
 
   if (!response.ok || !payload.analysis) {
-    throw new Error(payload.error ?? 'The OpenAI proxy could not return a valid Rolefit analysis.')
+    throw new Error(payload.error ?? `The ${providerLabel} proxy could not return a valid Rolefit analysis.`)
   }
 
   return {
     analysis: payload.analysis,
     mode: payload.mode ?? 'provider-live',
     statusDetail:
-      payload.statusDetail ?? 'OpenAI returned structured JSON through the local Rolefit proxy. The session key was not saved.',
-    statusTitle: payload.statusTitle ?? 'OpenAI live analysis',
-    transportLabel: payload.transportLabel ?? 'Live OpenAI',
+      payload.statusDetail ??
+      `${providerLabel} returned structured analysis through the local Rolefit proxy. The session key was not saved.`,
+    statusTitle: payload.statusTitle ?? `${providerLabel} live analysis`,
+    transportLabel: payload.transportLabel ?? `Live ${providerLabel}`,
   }
 }
 
@@ -213,13 +218,16 @@ export async function runRolefitProvider<TAnalysis extends RolefitAnalysisSnapsh
 
   const hasSessionKey = apiKey.trim().length > 0
 
-  if (provider === 'openai' && hasSessionKey) {
-    const liveRun = await runOpenAiProxy<TAnalysis>({
+  if (hasSessionKey) {
+    const liveProvider = provider
+    const liveRun = await runLiveProviderProxy<TAnalysis>({
       apiKey,
       contract,
       cvText,
       jobText,
       model,
+      provider: liveProvider,
+      providerLabel,
     })
 
     return {
