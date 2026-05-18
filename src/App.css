@@ -766,6 +766,10 @@ textarea {
   gap: 10px;
 }
 
+.claim-safety-item {
+  align-items: flex-start;
+}
+
 .claim-safety-head {
   justify-content: space-between;
 }
@@ -791,6 +795,11 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 9px 10px;
+}
+
+.claim-safety-item > div {
+  flex: 1;
+  min-width: 0;
 }
 
 .claim-safety-item.done {
@@ -821,6 +830,96 @@ textarea {
   font-size: 13px;
   font-style: normal;
   margin-top: 2px;
+}
+
+.claim-term-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.claim-term-chip {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.claim-term-chip.done {
+  border-color: #ccebd7;
+  color: #12614f;
+}
+
+.claim-term-chip.next {
+  border-color: #f2cb77;
+  color: #7a570c;
+}
+
+.claim-term-chip.blocked {
+  border-color: #efc2bd;
+  color: #96362f;
+}
+
+.claim-term-chip strong,
+.claim-term-chip small {
+  font-size: 12px;
+}
+
+.claim-term-chip small {
+  color: var(--muted);
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.claim-empty,
+.claim-suggestion {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 8px 0 0;
+}
+
+.claim-suggestion {
+  color: var(--ink);
+}
+
+.claim-fix-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.claim-fix-button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #cfe0da;
+  border-radius: 7px;
+  color: var(--ink);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 760;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.claim-fix-button:hover {
+  border-color: #a9c6bb;
+  color: var(--green-dark);
+}
+
+.claim-fix-button span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  margin: 0;
+  text-transform: none;
 }
 
 .evidence-map {

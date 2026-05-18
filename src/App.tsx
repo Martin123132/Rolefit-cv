@@ -38,10 +38,30 @@ type RewriteDraft = {
   note: string
   summary: string
 }
+type RewriteFieldTarget =
+  | { field: 'bullet'; index: number }
+  | { field: 'note' }
+  | { field: 'summary' }
+type ClaimTermSafety = {
+  detail: string
+  evidence: string
+  label: string
+  status: StepStatus
+  term: string
+}
 type ClaimSafety = {
   detail: string
   label: string
+  suggestion: string
   status: StepStatus
+  terms: ClaimTermSafety[]
+}
+type RewriteSafetyItem = {
+  id: string
+  label: string
+  safety: ClaimSafety
+  target: RewriteFieldTarget
+  text: string
 }
 
 type SavedDraft = {
@@ -144,6 +164,12 @@ const evidenceReviewDetails = Object.fromEntries(
 const evidenceReviewStatuses = Object.fromEntries(
   evidenceReviewOptions.map((option) => [option.id, option.status]),
 ) as Record<EvidenceReviewChoice, StepStatus>
+
+const evidenceReviewPriority: Record<StepStatus, number> = {
+  done: 0,
+  next: 1,
+  blocked: 2,
+}
 
 const skillTerms = [
   'account management',
@@ -282,6 +308,18 @@ function isSupportedImportFile(file: File) {
   return importExtensions.has(importExtension(file.name))
 }
 
+function evidenceReviewKeyFor(
+  analysisKey: string,
+  requirementMap: RequirementEvidence[],
+  evidenceChoices: Record<string, EvidenceReviewChoice>,
+) {
+  return [
+    analysisKey,
+    '---rolefit-evidence-review---',
+    ...requirementMap.map((item) => `${item.term}:${evidenceChoices[item.term] ?? 'unreviewed'}`),
+  ].join('\n')
+}
+
 function readImportedText(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -418,41 +456,136 @@ function rewriteFromAnalysis(analysis: Analysis): RewriteDraft {
   }
 }
 
+function claimTermSafety(
+  item: RequirementEvidence,
+  evidenceChoices: Record<string, EvidenceReviewChoice>,
+): ClaimTermSafety {
+  const choice = evidenceChoices[item.term] ?? 'needs-proof'
+  const status = evidenceReviewStatuses[choice]
+
+  if (choice === 'true') {
+    return {
+      detail: item.evidence ? 'Use this exact proof line.' : 'Marked true, but the CV still needs a clear source line.',
+      evidence: item.evidence,
+      label: 'Backed',
+      status,
+      term: item.term,
+    }
+  }
+
+  if (choice === 'do-not-claim') {
+    return {
+      detail: 'Remove this claim from the rewrite, or soften it until proof exists.',
+      evidence: item.nextAction,
+      label: 'Do not claim',
+      status,
+      term: item.term,
+    }
+  }
+
+  return {
+    detail: 'Keep this as a gap until the CV has a truthful example.',
+    evidence: item.nextAction,
+    label: 'Needs proof',
+    status,
+    term: item.term,
+  }
+}
+
+function claimSafetySuggestion(terms: ClaimTermSafety[]) {
+  const blockedTerms = terms.filter((item) => item.status === 'blocked')
+  const warningTerms = terms.filter((item) => item.status === 'next')
+  const backedTerms = terms.filter((item) => item.status === 'done')
+
+  if (blockedTerms.length > 0) {
+    return backedTerms.length > 0
+      ? `Keep the line focused on ${phraseList(backedTerms.map((item) => item.term))}. Leave the red requirement out.`
+      : 'Remove the red requirement and keep the line focused on proof already in the CV.'
+  }
+
+  if (warningTerms.length > 0) {
+    return `Add a truthful example for ${phraseList(warningTerms.map((item) => item.term))}, or present it as a gap instead of a claim.`
+  }
+
+  if (backedTerms.length > 0) {
+    return `This is safe to keep. Be ready to explain the proof for ${phraseList(backedTerms.map((item) => item.term))}.`
+  }
+
+  return 'Tie this line to a mapped job requirement, or keep it as context rather than a claim.'
+}
+
+function honestRewriteForTerms(terms: ClaimTermSafety[]) {
+  const backedTerms = terms.filter((item) => item.status === 'done').map((item) => item.term)
+  const warningTerms = terms.filter((item) => item.status === 'next').map((item) => item.term)
+  const blockedTerms = terms.filter((item) => item.status === 'blocked')
+
+  if (backedTerms.length > 0) {
+    return `Focus this line on proven ${phraseList(backedTerms)}. Keep any unproven requirement out until there is evidence.`
+  }
+
+  if (warningTerms.length > 0 && blockedTerms.length === 0) {
+    return 'Use this as a gap note for now: add a specific situation, action, and result before making it a CV claim.'
+  }
+
+  return 'Keep this line to evidence already reviewed in the CV. Leave the unproven requirement out of this application.'
+}
+
+function proofPromptForClaimTerms(terms: ClaimTermSafety[]) {
+  const requirementLabel = terms.length === 1 ? 'this selected job requirement' : 'these selected job requirements'
+  return [
+    `Proof to add for ${requirementLabel}:`,
+    'Situation:',
+    'Action:',
+    'Result:',
+  ].join('\n')
+}
+
 function claimSafetyForText(
   text: string,
   analysis: Analysis,
   evidenceChoices: Record<string, EvidenceReviewChoice>,
 ): ClaimSafety {
-  const matchedTerms = analysis.requirementMap.filter((item) => textContains(text, item.term))
+  const terms = analysis.requirementMap
+    .filter((item) => textContains(text, item.term))
+    .map((item) => claimTermSafety(item, evidenceChoices))
+    .sort((left, right) => evidenceReviewPriority[right.status] - evidenceReviewPriority[left.status])
 
-  if (matchedTerms.length === 0) {
+  if (terms.length === 0) {
     return {
       detail: 'No mapped requirement is named here yet.',
       label: 'Needs proof',
+      suggestion: claimSafetySuggestion([]),
       status: 'next',
+      terms: [],
     }
   }
 
-  if (matchedTerms.some((item) => evidenceChoices[item.term] === 'do-not-claim')) {
+  if (terms.some((item) => item.status === 'blocked')) {
     return {
       detail: 'This mentions a requirement marked do not claim.',
       label: 'Do not claim',
+      suggestion: claimSafetySuggestion(terms),
       status: 'blocked',
+      terms,
     }
   }
 
-  if (matchedTerms.some((item) => evidenceChoices[item.term] !== 'true')) {
+  if (terms.some((item) => item.status === 'next')) {
     return {
       detail: 'This mentions a requirement that still needs proof.',
       label: 'Needs proof',
+      suggestion: claimSafetySuggestion(terms),
       status: 'next',
+      terms,
     }
   }
 
   return {
     detail: 'Backed by the reviewed evidence map.',
     label: 'Backed by evidence',
+    suggestion: claimSafetySuggestion(terms),
     status: 'done',
+    terms,
   }
 }
 
@@ -460,15 +593,16 @@ function rewriteSafetyItems(
   rewrite: RewriteDraft,
   analysis: Analysis,
   evidenceChoices: Record<string, EvidenceReviewChoice>,
-) {
+): RewriteSafetyItem[] {
   return [
-    { id: 'summary', label: 'Summary', text: rewrite.summary },
+    { id: 'summary', label: 'Summary', target: { field: 'summary' as const }, text: rewrite.summary },
     ...rewrite.bullets.map((bullet, index) => ({
       id: `bullet-${index}`,
       label: `Bullet ${index + 1}`,
+      target: { field: 'bullet' as const, index },
       text: bullet,
     })),
-    { id: 'note', label: 'Note', text: rewrite.note },
+    { id: 'note', label: 'Note', target: { field: 'note' as const }, text: rewrite.note },
   ].map((item) => ({
     ...item,
     safety: claimSafetyForText(item.text, analysis, evidenceChoices),
@@ -667,12 +801,7 @@ function App() {
     : 0
   const allRequirementsReviewed = requirementTotal === 0 || reviewedRequirementCount === requirementTotal
   const evidenceReviewKey = useMemo(
-    () =>
-      [
-        analysisKey,
-        '---rolefit-evidence-review---',
-        ...analysis.requirementMap.map((item) => `${item.term}:${evidenceChoices[item.term] ?? 'unreviewed'}`),
-      ].join('\n'),
+    () => evidenceReviewKeyFor(analysisKey, analysis.requirementMap, evidenceChoices),
     [analysis.requirementMap, analysisKey, evidenceChoices],
   )
   const evidenceReviewed =
@@ -882,6 +1011,68 @@ function App() {
     setCoachDoneKey('')
     setInterviewDoneKey('')
     setPackDoneKey('')
+  }
+
+  function updateRewriteField(target: RewriteFieldTarget, text: string) {
+    updateRewriteDraft((current) => {
+      if (target.field === 'summary') {
+        return { ...current, summary: text }
+      }
+
+      if (target.field === 'note') {
+        return { ...current, note: text }
+      }
+
+      return {
+        ...current,
+        bullets: current.bullets.map((item, index) => (index === target.index ? text : item)),
+      }
+    })
+  }
+
+  function applyHonestRewrite(item: RewriteSafetyItem) {
+    updateRewriteField(item.target, honestRewriteForTerms(item.safety.terms))
+  }
+
+  function removeUnsafeClaim(item: RewriteSafetyItem) {
+    const replacementTerms = item.safety.terms.filter((term) => term.status !== 'blocked')
+    updateRewriteField(item.target, honestRewriteForTerms(replacementTerms))
+  }
+
+  function markClaimAsNeedsProof(terms: ClaimTermSafety[]) {
+    const nextChoices = { ...evidenceChoices }
+
+    terms
+      .filter((term) => term.status === 'blocked')
+      .forEach((term) => {
+        nextChoices[term.term] = 'needs-proof'
+      })
+
+    const nextEvidenceReviewKey = evidenceReviewKeyFor(analysisKey, analysis.requirementMap, nextChoices)
+    setEvidenceChoices(nextChoices)
+    setEvidenceReviewedKey(nextEvidenceReviewKey)
+    setEditedRewrite(rewriteDraft)
+    setEditedRewriteKey(nextEvidenceReviewKey)
+    setRewriteDoneKey('')
+    setCoachDoneKey('')
+    setInterviewDoneKey('')
+    setPackDoneKey('')
+  }
+
+  function addProofPromptToCv(terms: ClaimTermSafety[]) {
+    setCvText((current) => `${current.trim()}\n\n${proofPromptForClaimTerms(terms)}`)
+    setAnalysisRunKey('')
+    setEvidenceChoices({})
+    setEvidenceReviewedKey('')
+    setEditedRewrite(null)
+    setEditedRewriteKey('')
+    setRewriteDoneKey('')
+    setCoachDoneKey('')
+    setInterviewDoneKey('')
+    setPackDoneKey('')
+    setAnalysisError('')
+    setLastRun('Proof prompt added')
+    setActiveTab('tailor')
   }
 
   async function handleImportFile(target: ImportTarget, file: File) {
@@ -1500,16 +1691,82 @@ function App() {
                   <span className={`status-light ${rewriteHasBlockedClaim ? 'blocked' : rewriteWarningCount > 0 ? 'next' : 'done'}`} aria-hidden="true"></span>
                 </div>
                 <div className="claim-safety-list">
-                  {rewriteSafety.map((item) => (
-                    <div className={`claim-safety-item ${item.safety.status}`} key={item.id}>
-                      <span className={`status-light ${item.safety.status}`} aria-hidden="true"></span>
-                      <div>
-                        <strong>{item.label}</strong>
-                        <span>{item.safety.label}</span>
-                        <em>{item.safety.detail}</em>
+                  {rewriteSafety.map((item) => {
+                    const blockedTerms = item.safety.terms.filter((term) => term.status === 'blocked')
+                    const proofTerms = item.safety.terms.filter((term) => term.status === 'next')
+                    const fixTerms = proofTerms.length > 0 ? proofTerms : item.safety.terms
+                    const needsFix = item.safety.status !== 'done'
+
+                    return (
+                      <div className={`claim-safety-item ${item.safety.status}`} key={item.id}>
+                        <span className={`status-light ${item.safety.status}`} aria-hidden="true"></span>
+                        <div>
+                          <strong>{item.label}</strong>
+                          <span>{item.safety.label}</span>
+                          <em>{item.safety.detail}</em>
+
+                          {item.safety.terms.length > 0 ? (
+                            <div className="claim-term-list" aria-label={`${item.label} matched terms`}>
+                              {item.safety.terms.map((term) => (
+                                <div className={`claim-term-chip ${term.status}`} key={term.term}>
+                                  <span className={`status-light ${term.status}`} aria-hidden="true"></span>
+                                  <strong>{term.term}</strong>
+                                  <small>{term.label}</small>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="claim-empty">No role requirement is named in this line.</p>
+                          )}
+
+                          <p className="claim-suggestion">{item.safety.suggestion}</p>
+
+                          {needsFix && (
+                            <div className="claim-fix-actions" aria-label={`${item.label} fix actions`}>
+                              {blockedTerms.length > 0 && (
+                                <button
+                                  className="claim-fix-button"
+                                  onClick={() => removeUnsafeClaim(item)}
+                                  type="button"
+                                >
+                                  <RefreshCw size={14} aria-hidden="true" />
+                                  <span>Remove unsafe claim</span>
+                                </button>
+                              )}
+                              <button
+                                className="claim-fix-button"
+                                onClick={() => applyHonestRewrite(item)}
+                                type="button"
+                              >
+                                <Sparkles size={14} aria-hidden="true" />
+                                <span>Rewrite honestly</span>
+                              </button>
+                              {fixTerms.length > 0 && (
+                                <button
+                                  className="claim-fix-button"
+                                  onClick={() => addProofPromptToCv(fixTerms)}
+                                  type="button"
+                                >
+                                  <FileText size={14} aria-hidden="true" />
+                                  <span>Add proof to CV input</span>
+                                </button>
+                              )}
+                              {blockedTerms.length > 0 && (
+                                <button
+                                  className="claim-fix-button"
+                                  onClick={() => markClaimAsNeedsProof(blockedTerms)}
+                                  type="button"
+                                >
+                                  <Check size={14} aria-hidden="true" />
+                                  <span>Mark as needs proof</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
               <button
