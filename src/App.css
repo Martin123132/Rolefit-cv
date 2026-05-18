@@ -310,6 +310,19 @@ textarea:focus {
   padding: 11px 12px;
 }
 
+.error-strip {
+  align-items: center;
+  background: #fff0ef;
+  border: 1px solid #efc2bd;
+  border-radius: 8px;
+  color: #96362f;
+  display: flex;
+  font-size: 13px;
+  font-weight: 720;
+  gap: 10px;
+  padding: 11px 12px;
+}
+
 .guidance-strip.done {
   background: #eff9f3;
   border-color: #ccebd7;
@@ -597,6 +610,91 @@ textarea {
   padding-top: 14px;
 }
 
+.provider-run-card {
+  background: #fbfcfb;
+  border: 1px solid #dfe8e5;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 13px;
+}
+
+.provider-run-card.local-mock {
+  background: #f0faf4;
+  border-color: #cfecd9;
+}
+
+.provider-run-card.provider-needs-key,
+.provider-run-card.provider-contract {
+  background: #fff8e8;
+  border-color: #f2cb77;
+}
+
+.provider-run-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.adapter-pill {
+  background: #ffffff;
+  border: 1px solid #dce8e3;
+  border-radius: 999px;
+  color: var(--muted-strong);
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 760;
+  min-height: 28px;
+  padding: 6px 10px;
+}
+
+.contract-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.contract-grid div {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #e2ebe7;
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px;
+}
+
+.contract-grid span {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.contract-grid strong {
+  font-size: 13px;
+  line-height: 1.3;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contract-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.contract-fields span {
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid #e2ebe7;
+  border-radius: 999px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 720;
+  padding: 6px 9px;
+}
+
 .requirement-list {
   display: grid;
   gap: 9px;
@@ -808,7 +906,8 @@ textarea {
   .provider-console,
   .workspace,
   .editor-grid,
-  .match-grid {
+  .match-grid,
+  .contract-grid {
     grid-template-columns: 1fr;
   }
 
@@ -851,7 +950,8 @@ textarea {
   }
 
   .section-head,
-  .panel-head {
+  .panel-head,
+  .provider-run-head {
     align-items: stretch;
     flex-direction: column;
   }

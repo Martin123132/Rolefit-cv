@@ -17,9 +17,13 @@ import {
   UserRoundCheck,
   type LucideIcon,
 } from 'lucide-react'
+import {
+  runRolefitProvider,
+  type ProviderId,
+  type ProviderRunResult,
+} from './ai/rolefitProvider'
 import './App.css'
 
-type ProviderId = 'mock' | 'openai' | 'claude' | 'gemini'
 type TabId = 'tailor' | 'coach' | 'interview' | 'pack'
 type StepId = 'import' | 'analyse' | 'rewrite' | 'coach' | 'interview' | 'pack'
 type StepStatus = 'done' | 'next' | 'blocked'
@@ -392,7 +396,10 @@ function App() {
   const [confidence, setConfidence] = useState(savedDraft.confidence ?? 62)
   const [lastRun, setLastRun] = useState('Ready')
   const [copied, setCopied] = useState<string | null>(null)
+  const [analysisRun, setAnalysisRun] = useState<ProviderRunResult<Analysis> | null>(null)
   const [analysisRunKey, setAnalysisRunKey] = useState('')
+  const [analysisError, setAnalysisError] = useState('')
+  const [isAnalysing, setIsAnalysing] = useState(false)
   const [evidenceReviewedKey, setEvidenceReviewedKey] = useState('')
   const [rewriteDoneKey, setRewriteDoneKey] = useState('')
   const [coachDoneKey, setCoachDoneKey] = useState('')
@@ -403,27 +410,33 @@ function App() {
     () => `${cvText.trim()}\n---rolefit-job---\n${jobText.trim()}`,
     [cvText, jobText],
   )
-  const analysis = useMemo(() => buildAnalysis(cvText, jobText), [cvText, jobText])
+  const analysisKey = useMemo(
+    () => `${inputKey}\n---rolefit-provider---\n${provider}\n---rolefit-model---\n${model}`,
+    [inputKey, model, provider],
+  )
+  const hasCv = cvText.trim().length >= 60
+  const hasJob = jobText.trim().length >= 60
+  const importReady = hasCv && hasJob
+  const draftAnalysis = useMemo(() => buildAnalysis(cvText, jobText), [cvText, jobText])
+  const currentAnalysisRun = importReady && analysisRunKey === analysisKey ? analysisRun : null
+  const analysis = currentAnalysisRun?.analysis ?? draftAnalysis
   const answerScore = useMemo(
     () => scoreAnswer(practiceAnswer, analysis, confidence),
     [analysis, confidence, practiceAnswer],
   )
   const practiceKey = useMemo(
-    () => `${inputKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
-    [confidence, inputKey, practiceAnswer],
+    () => `${analysisKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
+    [analysisKey, confidence, practiceAnswer],
   )
   const packText = useMemo(
     () => applicationPackText(analysis, practiceAnswer, confidence),
     [analysis, confidence, practiceAnswer],
   )
   const selectedProvider = providers.find((item) => item.id === provider) ?? providers[0]
-  const hasCv = cvText.trim().length >= 60
-  const hasJob = jobText.trim().length >= 60
-  const importReady = hasCv && hasJob
-  const hasCurrentAnalysis = importReady && analysisRunKey === inputKey
-  const evidenceReviewed = hasCurrentAnalysis && evidenceReviewedKey === inputKey
-  const rewriteDone = evidenceReviewed && rewriteDoneKey === inputKey
-  const coachDone = rewriteDone && coachDoneKey === inputKey
+  const hasCurrentAnalysis = Boolean(currentAnalysisRun)
+  const evidenceReviewed = hasCurrentAnalysis && evidenceReviewedKey === analysisKey
+  const rewriteDone = evidenceReviewed && rewriteDoneKey === analysisKey
+  const coachDone = rewriteDone && coachDoneKey === analysisKey
   const answerReady = practiceAnswer.trim().length >= 80 && answerScore >= 45
   const interviewDone = coachDone && interviewDoneKey === practiceKey
   const packDone = interviewDone && packDoneKey === practiceKey
@@ -523,16 +536,37 @@ function App() {
     setModel(modelOptions[nextProvider][0])
   }
 
-  function runAnalysis() {
-    if (!importReady) return
-    setAnalysisRunKey(inputKey)
-    setActiveTab('tailor')
-    setLastRun(
-      `Updated ${new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`,
-    )
+  async function runAnalysis() {
+    if (!importReady || isAnalysing) return
+
+    setIsAnalysing(true)
+    setAnalysisError('')
+
+    try {
+      const nextAnalysis = buildAnalysis(cvText, jobText)
+      const nextRun = await runRolefitProvider({
+        analysis: nextAnalysis,
+        apiKey,
+        cvText,
+        jobText,
+        model,
+        provider,
+      })
+
+      setAnalysisRun(nextRun)
+      setAnalysisRunKey(analysisKey)
+      setActiveTab('tailor')
+      setLastRun(
+        `Updated ${new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}`,
+      )
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : 'The analysis adapter could not complete this run.')
+    } finally {
+      setIsAnalysing(false)
+    }
   }
 
   async function copyRewrite() {
@@ -670,11 +704,18 @@ function App() {
               <span className="section-kicker">Tailor to the role</span>
               <h2>Evidence in, targeted draft out</h2>
             </div>
-            <button className="icon-button action-button" disabled={!importReady} onClick={runAnalysis} type="button">
+            <button className="icon-button action-button" disabled={!importReady || isAnalysing} onClick={runAnalysis} type="button">
               <RefreshCw size={17} aria-hidden="true" />
-              <span>Run analysis</span>
+              <span>{isAnalysing ? 'Analysing' : 'Run analysis'}</span>
             </button>
           </div>
+
+          {analysisError && (
+            <div className="error-strip" role="alert">
+              <span className="status-light blocked" aria-hidden="true"></span>
+              <span>{analysisError}</span>
+            </div>
+          )}
 
           <div className="editor-grid">
             <label className="editor-panel">
@@ -739,6 +780,47 @@ function App() {
                   </div>
                 </div>
               </div>
+              {currentAnalysisRun && (
+                <div className={`provider-run-card ${currentAnalysisRun.mode}`}>
+                  <div className="provider-run-head">
+                    <div>
+                      <span className="section-kicker">AI provider contract</span>
+                      <h3>{currentAnalysisRun.statusTitle}</h3>
+                    </div>
+                    <span className="adapter-pill">{currentAnalysisRun.transportLabel}</span>
+                  </div>
+                  <p>{currentAnalysisRun.statusDetail}</p>
+                  <div className="contract-grid">
+                    <div>
+                      <span>Provider</span>
+                      <strong>{currentAnalysisRun.providerLabel}</strong>
+                    </div>
+                    <div>
+                      <span>Model</span>
+                      <strong>{currentAnalysisRun.model}</strong>
+                    </div>
+                    <div>
+                      <span>Contract</span>
+                      <strong>{currentAnalysisRun.contract.version}</strong>
+                    </div>
+                    <div>
+                      <span>API key</span>
+                      <strong>
+                        {currentAnalysisRun.keyState === 'present'
+                          ? 'Session key present'
+                          : currentAnalysisRun.keyState === 'missing'
+                            ? 'Needed for live calls'
+                            : 'Not required'}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="contract-fields">
+                    {currentAnalysisRun.contract.outputFields.map((field) => (
+                      <span key={field.field}>{field.field}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="evidence-map">
                 <div className="panel-head">
                   <div>
@@ -749,7 +831,7 @@ function App() {
                     className="icon-button action-button"
                     disabled={evidenceReviewed}
                     onClick={() => {
-                      setEvidenceReviewedKey(inputKey)
+                      setEvidenceReviewedKey(analysisKey)
                       setActiveTab('tailor')
                     }}
                     type="button"
@@ -850,7 +932,7 @@ function App() {
               <button
                 className="icon-button action-button"
                 onClick={() => {
-                  setRewriteDoneKey(inputKey)
+                  setRewriteDoneKey(analysisKey)
                   setActiveTab('coach')
                 }}
                 type="button"
@@ -892,7 +974,7 @@ function App() {
               <button
                 className="icon-button action-button"
                 onClick={() => {
-                  setCoachDoneKey(inputKey)
+                  setCoachDoneKey(analysisKey)
                   setActiveTab('interview')
                 }}
                 type="button"
