@@ -11,6 +11,10 @@ type RolefitRequirementEvidence = {
 
 type RolefitAnalysis = {
   coaching: string[]
+  evidence: {
+    line: string
+    term: string
+  }[]
   gaps: string[]
   matched: string[]
   questions: string[]
@@ -39,10 +43,22 @@ const maxBodyBytes = 160_000
 const rolefitAnalysisSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'score', 'matched', 'gaps', 'requirementMap', 'rewrite', 'questions', 'coaching'],
+  required: ['title', 'score', 'matched', 'gaps', 'evidence', 'requirementMap', 'rewrite', 'questions', 'coaching'],
   properties: {
     title: { type: 'string' },
     score: { type: 'number' },
+    evidence: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['term', 'line'],
+        properties: {
+          term: { type: 'string' },
+          line: { type: 'string' },
+        },
+      },
+    },
     matched: {
       type: 'array',
       items: { type: 'string' },
@@ -139,6 +155,7 @@ function validateAnalysis(value: unknown): RolefitAnalysis {
   if (!isStringArray(candidate.gaps)) throw new Error('Analysis response is missing gaps.')
   if (!isStringArray(candidate.questions)) throw new Error('Analysis response is missing questions.')
   if (!isStringArray(candidate.coaching)) throw new Error('Analysis response is missing coaching.')
+  if (!Array.isArray(candidate.evidence)) throw new Error('Analysis response is missing evidence.')
   if (!candidate.rewrite || typeof candidate.rewrite !== 'object') throw new Error('Analysis response is missing rewrite.')
   if (typeof candidate.rewrite.summary !== 'string') throw new Error('Analysis rewrite is missing summary.')
   if (!isStringArray(candidate.rewrite.bullets)) throw new Error('Analysis rewrite is missing bullets.')
@@ -162,8 +179,20 @@ function validateAnalysis(value: unknown): RolefitAnalysis {
     }
   })
 
+  const evidence = candidate.evidence.map((item) => {
+    if (!item || typeof item !== 'object') throw new Error('Evidence item must be an object.')
+    const evidenceItem = item as { line?: unknown; term?: unknown }
+    if (typeof evidenceItem.term !== 'string') throw new Error('Evidence item is missing term.')
+    if (typeof evidenceItem.line !== 'string') throw new Error('Evidence item is missing line.')
+    return {
+      line: evidenceItem.line,
+      term: evidenceItem.term,
+    }
+  })
+
   return {
     coaching: candidate.coaching,
+    evidence,
     gaps: candidate.gaps,
     matched: candidate.matched,
     questions: candidate.questions,
@@ -252,15 +281,15 @@ function extractApiErrorMessage(payload: unknown) {
 }
 
 function cleanModel(model: unknown) {
-  if (typeof model !== 'string') return 'gpt-5'
+  if (typeof model !== 'string') return 'gpt-5.2'
   const trimmed = model.trim()
-  return trimmed || 'gpt-5'
+  return trimmed || 'gpt-5.2'
 }
 
 function cleanClaudeModel(model: unknown) {
-  if (typeof model !== 'string') return 'claude-sonnet-4-20250514'
+  if (typeof model !== 'string') return 'claude-sonnet-4-5'
   const trimmed = model.trim()
-  return trimmed || 'claude-sonnet-4-20250514'
+  return trimmed || 'claude-sonnet-4-5'
 }
 
 function cleanGeminiModel(model: unknown) {

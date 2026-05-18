@@ -8,7 +8,9 @@ The product rule is simple: the UI teaches the user what to do next.
 - Orange means do this next.
 - Red means this part is locked until the previous step is done.
 
-The current app is a local demo. Provider/model selection and a session-only API key field are present for future bring-your-own-key integrations, but no real AI requests are sent yet.
+The current app runs locally and supports bring-your-own-key live analysis for OpenAI, Claude, and Gemini through a local proxy. API keys are held in browser session state for the request and are not saved to local draft storage. Local mock mode still works without a key.
+
+Live provider calls use the same Rolefit analysis contract as the local mock. If a live request fails, the app falls back to local analysis so the workflow can continue.
 
 ## One-click run on Windows
 

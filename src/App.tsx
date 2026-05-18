@@ -126,9 +126,9 @@ const emptyImportStatus: ImportStatus = {
 
 const modelOptions: Record<ProviderId, string[]> = {
   mock: ['Rolefit demo model', 'Fast local draft'],
-  openai: ['gpt-5', 'gpt-4o', 'gpt-4o-mini'],
-  claude: ['claude-sonnet-4-20250514', 'claude-opus-4-1-20250805', 'claude-3-7-sonnet-20250219'],
-  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+  openai: ['gpt-5.2', 'gpt-5', 'gpt-4o-mini'],
+  claude: ['claude-sonnet-4-5', 'claude-opus-4-1-20250805', 'claude-sonnet-4-20250514'],
+  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-pro-preview'],
 }
 
 const customModelOption = '__rolefit-custom-model__'
@@ -1364,7 +1364,7 @@ function App() {
                   setApiKey(event.target.value)
                   setAnalysisError('')
                 }}
-                placeholder="Paste key for real calls later"
+                placeholder="Paste key for this session"
                 type="password"
                 value={apiKey}
               />

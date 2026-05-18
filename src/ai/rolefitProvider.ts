@@ -9,6 +9,10 @@ export type RolefitRequirementEvidence = {
 
 export type RolefitAnalysisSnapshot = {
   coaching: readonly string[]
+  evidence: readonly {
+    line: string
+    term: string
+  }[]
   gaps: readonly string[]
   matched: readonly string[]
   questions: readonly string[]
@@ -80,6 +84,12 @@ const providerLabels: Record<ProviderId, string> = {
 const responseShape = {
   title: 'string',
   score: 'number from 0 to 100',
+  evidence: [
+    {
+      line: 'direct CV line that proves the term',
+      term: 'proven role requirement',
+    },
+  ],
   matched: ['role requirement proven by the CV'],
   gaps: ['role requirement not proven by the CV'],
   requirementMap: [
@@ -102,6 +112,7 @@ const responseShape = {
 const outputFields = [
   { field: 'title', purpose: 'Identify the target role being analysed.', required: true },
   { field: 'score', purpose: 'Give a rough fit signal without pretending to be exact.', required: true },
+  { field: 'evidence', purpose: 'Extract direct proof lines from the CV.', required: true },
   { field: 'matched', purpose: 'List requirements already supported by CV proof.', required: true },
   { field: 'gaps', purpose: 'List requirements that should not be exaggerated.', required: true },
   { field: 'requirementMap', purpose: 'Map every role requirement to proof or a next action.', required: true },
@@ -220,28 +231,46 @@ export async function runRolefitProvider<TAnalysis extends RolefitAnalysisSnapsh
 
   if (hasSessionKey) {
     const liveProvider = provider
-    const liveRun = await runLiveProviderProxy<TAnalysis>({
-      apiKey,
-      contract,
-      cvText,
-      jobText,
-      model,
-      provider: liveProvider,
-      providerLabel,
-    })
+    try {
+      const liveRun = await runLiveProviderProxy<TAnalysis>({
+        apiKey,
+        contract,
+        cvText,
+        jobText,
+        model,
+        provider: liveProvider,
+        providerLabel,
+      })
 
-    return {
-      analysis: liveRun.analysis,
-      contract,
-      generatedAt: new Date().toISOString(),
-      keyState: 'present',
-      mode: liveRun.mode,
-      model,
-      providerId: provider,
-      providerLabel,
-      statusDetail: liveRun.statusDetail,
-      statusTitle: liveRun.statusTitle,
-      transportLabel: liveRun.transportLabel,
+      return {
+        analysis: liveRun.analysis,
+        contract,
+        generatedAt: new Date().toISOString(),
+        keyState: 'present',
+        mode: liveRun.mode,
+        model,
+        providerId: provider,
+        providerLabel,
+        statusDetail: liveRun.statusDetail,
+        statusTitle: liveRun.statusTitle,
+        transportLabel: liveRun.transportLabel,
+      }
+    } catch (error) {
+      return {
+        analysis,
+        contract,
+        generatedAt: new Date().toISOString(),
+        keyState: 'present',
+        mode: 'provider-contract',
+        model,
+        providerId: provider,
+        providerLabel,
+        statusDetail: `${
+          error instanceof Error ? error.message : `${providerLabel} live analysis failed.`
+        } Local Rolefit analysis is shown so the workflow can continue. The session key was not saved.`,
+        statusTitle: `${providerLabel} live request fell back`,
+        transportLabel: 'Local fallback',
+      }
     }
   }
 
@@ -255,7 +284,7 @@ export async function runRolefitProvider<TAnalysis extends RolefitAnalysisSnapsh
     providerId: provider,
     providerLabel,
     statusDetail: hasSessionKey
-      ? `${providerLabel} is selected and a session key is present. This provider adapter is not live yet, so the local engine is validating the prompt contract.`
+      ? `${providerLabel} is selected and a session key is present. Rolefit will try the local live proxy for this provider.`
       : `${providerLabel} is selected, but no session key is present. This run uses the local engine while preparing the exact provider prompt contract.`,
     statusTitle: `${providerLabel} adapter contract`,
     transportLabel: hasSessionKey ? 'Contract ready' : 'Needs session key',
