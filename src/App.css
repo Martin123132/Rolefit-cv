@@ -1043,6 +1043,37 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.contract-guardrails {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.contract-guardrails div {
+  align-items: start;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #e2ebe7;
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 12px 1fr;
+  min-width: 0;
+  padding: 9px;
+}
+
+.contract-guardrails strong {
+  color: var(--ink);
+  display: block;
+  font-size: 12px;
+  line-height: 1.25;
+  margin-bottom: 2px;
+}
+
+.contract-guardrails p {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .contract-fields {
   display: flex;
   flex-wrap: wrap;
@@ -1508,6 +1539,7 @@ textarea {
   .match-grid,
   .coach-grid,
   .star-grid,
+  .contract-guardrails,
   .contract-grid {
     grid-template-columns: 1fr;
   }

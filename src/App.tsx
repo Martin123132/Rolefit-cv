@@ -18,6 +18,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import {
+  liveProviderInputLimitLabel,
+  liveProviderTimeoutLabel,
   runRolefitProvider,
   type ProviderId,
   type ProviderRunResult,
@@ -1354,6 +1356,11 @@ function App() {
     starDraftReady(interviewStar)
   const interviewDone = coachDone && interviewDoneKey === practiceKey
   const packDone = interviewDone && packDoneKey === practiceKey
+  const liveProviderReturned = currentAnalysisRun?.mode === 'provider-live'
+  const liveProviderUsedFallback =
+    currentAnalysisRun?.mode === 'provider-contract' &&
+    currentAnalysisRun.keyState === 'present' &&
+    currentAnalysisRun.transportLabel === 'Local fallback'
   const providerStatus =
     analysisError && apiKey.trim()
       ? {
@@ -1361,6 +1368,18 @@ function App() {
           label: 'Live request failed',
           status: 'blocked' as StepStatus,
         }
+      : liveProviderReturned
+        ? {
+            detail: 'The selected provider returned structured Rolefit JSON through the local proxy.',
+            label: 'Live provider returned',
+            status: 'done' as StepStatus,
+          }
+        : liveProviderUsedFallback
+          ? {
+              detail: 'Local analysis kept the workflow moving. Check the key, model, or provider limit before retrying.',
+              label: 'Live fallback used',
+              status: 'next' as StepStatus,
+            }
       : !modelReady
         ? {
             detail: 'Type a model ID before running analysis.',
@@ -1375,7 +1394,7 @@ function App() {
             }
           : apiKey.trim()
             ? {
-                detail: 'Stored in memory for this tab, not saved in the draft.',
+                detail: `Session-only key. Live calls use ${liveProviderInputLimitLabel} per input and a ${liveProviderTimeoutLabel} timeout.`,
                 label: 'Session key present',
                 status: 'done' as StepStatus,
               }
@@ -2051,6 +2070,31 @@ function App() {
                             ? 'Needed for live calls'
                             : 'Not required'}
                       </strong>
+                    </div>
+                  </div>
+                  <div className="contract-guardrails" aria-label="Live provider guardrails">
+                    <div>
+                      <span className="status-light done" aria-hidden="true"></span>
+                      <p>
+                        <strong>Session key</strong>
+                        {currentAnalysisRun.keyState === 'not-required'
+                          ? 'No key is needed for local mock analysis.'
+                          : 'Held only in this browser tab and never saved to the draft.'}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="status-light next" aria-hidden="true"></span>
+                      <p>
+                        <strong>Live input limit</strong>
+                        CV and job text are capped at {liveProviderInputLimitLabel} each before a live call.
+                      </p>
+                    </div>
+                    <div>
+                      <span className="status-light next" aria-hidden="true"></span>
+                      <p>
+                        <strong>Timeout fallback</strong>
+                        Live calls wait {liveProviderTimeoutLabel}, then Rolefit keeps the local workflow available.
+                      </p>
                     </div>
                   </div>
                   <div className="contract-fields">

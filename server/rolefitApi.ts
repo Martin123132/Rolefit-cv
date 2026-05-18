@@ -38,7 +38,28 @@ type AnalyseRequest = {
   systemPrompt?: string
 }
 
-const maxBodyBytes = 160_000
+type ApiResult = {
+  payload: Record<string, unknown>
+  statusCode: number
+}
+
+type ProviderFetchResult =
+  | {
+      kind: 'response'
+      response: Response
+    }
+  | {
+      kind: 'failure'
+      failure: ApiResult
+    }
+
+const maxBodyBytes = 320_000
+const liveProviderApiKeyLimit = 8 * 1024
+const liveProviderInputTextLimit = 64 * 1024
+const liveProviderModelIdLimit = 120
+const liveProviderTimeoutMs = 45_000
+const maxSystemPromptChars = 6_000
+const maxUserPromptChars = liveProviderInputTextLimit * 2 + 2_048
 
 const rolefitAnalysisSchema = {
   type: 'object',
@@ -111,6 +132,13 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
     'Cache-Control': 'no-store',
   })
   response.end(JSON.stringify(payload))
+}
+
+function apiError(statusCode: number, error: string): ApiResult {
+  return {
+    payload: { error },
+    statusCode,
+  }
 }
 
 function readJsonBody(request: IncomingMessage) {
@@ -302,19 +330,118 @@ function cleanPrompt(prompt: unknown) {
   return typeof prompt === 'string' ? prompt.trim() : ''
 }
 
-async function runOpenAiAnalysis(requestBody: AnalyseRequest) {
+function validateLiveRequest(requestBody: AnalyseRequest, providerLabel: string) {
   const apiKey = typeof requestBody.apiKey === 'string' ? requestBody.apiKey.trim() : ''
-  if (!apiKey) {
-    return { statusCode: 401, payload: { error: 'OpenAI needs a session API key for live analysis.' } }
-  }
-
+  const model = typeof requestBody.model === 'string' ? requestBody.model.trim() : ''
   const systemPrompt = cleanPrompt(requestBody.systemPrompt)
   const userPrompt = cleanPrompt(requestBody.userPrompt)
-  if (!systemPrompt || !userPrompt) {
-    return { statusCode: 400, payload: { error: 'Analysis prompts are missing.' } }
+
+  if (!apiKey) return apiError(401, `${providerLabel} needs a session API key for live analysis.`)
+  if (apiKey.length > liveProviderApiKeyLimit) {
+    return apiError(400, `${providerLabel} session key is too long for this local proxy request.`)
+  }
+  if (model.length > liveProviderModelIdLimit) {
+    return apiError(400, `${providerLabel} model ID must be under ${liveProviderModelIdLimit} characters.`)
+  }
+  if (!systemPrompt || !userPrompt) return apiError(400, 'Analysis prompts are missing.')
+  if (systemPrompt.length > maxSystemPromptChars) {
+    return apiError(413, `The system prompt is too large for the live provider proxy.`)
+  }
+  if (userPrompt.length > maxUserPromptChars) {
+    return apiError(413, `The CV and job prompt is over the 64 KB per-input live request limit.`)
   }
 
-  const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
+  return null
+}
+
+function isAbortError(error: unknown) {
+  return Boolean(error && typeof error === 'object' && 'name' in error && error.name === 'AbortError')
+}
+
+function cleanProviderMessage(message: string) {
+  const compact = message.replace(/\s+/g, ' ').trim()
+  return compact.length > 240 ? `${compact.slice(0, 237)}...` : compact
+}
+
+function providerErrorStatus(status: number, providerLabel: string, apiErrorMessage: string) {
+  const rejectedKey =
+    status === 401 ||
+    status === 403 ||
+    (status === 400 && /api[_\s-]?key|invalid.*key/i.test(apiErrorMessage))
+
+  if (rejectedKey) {
+    return {
+      error: `${providerLabel} rejected this session API key.`,
+      statusCode: 401,
+    }
+  }
+
+  if (status === 429) {
+    return {
+      error: `${providerLabel} rate limited this request.`,
+      statusCode: 429,
+    }
+  }
+
+  if (status === 400) {
+    return {
+      error: `${providerLabel} rejected the request shape or selected model.`,
+      statusCode: 400,
+    }
+  }
+
+  return {
+    error: `${providerLabel} returned HTTP ${status}.`,
+    statusCode: 502,
+  }
+}
+
+async function providerApiFailure(providerLabel: string, response: Response): Promise<ApiResult> {
+  const errorPayload = (await response.json().catch(() => undefined)) as unknown
+  const apiErrorMessage = extractApiErrorMessage(errorPayload)
+  const failure = providerErrorStatus(response.status, providerLabel, apiErrorMessage)
+  const providerDetail = apiErrorMessage ? ` Provider said: ${cleanProviderMessage(apiErrorMessage)}` : ''
+
+  return apiError(failure.statusCode, `${failure.error}${providerDetail}`)
+}
+
+async function fetchProviderResponse(providerLabel: string, url: string, init: RequestInit): Promise<ProviderFetchResult> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), liveProviderTimeoutMs)
+
+  try {
+    return {
+      kind: 'response',
+      response: await fetch(url, {
+        ...init,
+        signal: controller.signal,
+      }),
+    }
+  } catch (error) {
+    const timedOut = isAbortError(error)
+    return {
+      kind: 'failure',
+      failure: apiError(
+        timedOut ? 504 : 502,
+        timedOut
+          ? `${providerLabel} timed out after 45 seconds.`
+          : `${providerLabel} could not be reached from the local proxy.`,
+      ),
+    }
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+async function runOpenAiAnalysis(requestBody: AnalyseRequest): Promise<ApiResult> {
+  const validationError = validateLiveRequest(requestBody, 'OpenAI')
+  if (validationError) return validationError
+
+  const apiKey = typeof requestBody.apiKey === 'string' ? requestBody.apiKey.trim() : ''
+  const systemPrompt = cleanPrompt(requestBody.systemPrompt)
+  const userPrompt = cleanPrompt(requestBody.userPrompt)
+
+  const openAiResult = await fetchProviderResponse('OpenAI', 'https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -336,15 +463,12 @@ async function runOpenAiAnalysis(requestBody: AnalyseRequest) {
       },
     }),
   })
+  if (openAiResult.kind === 'failure') return openAiResult.failure
+
+  const openAiResponse = openAiResult.response
 
   if (!openAiResponse.ok) {
-    const statusText =
-      openAiResponse.status === 401
-        ? 'OpenAI rejected this session API key.'
-        : openAiResponse.status === 429
-          ? 'OpenAI rate limited this request.'
-          : `OpenAI returned HTTP ${openAiResponse.status}.`
-    return { statusCode: openAiResponse.status === 401 ? 401 : 502, payload: { error: statusText } }
+    return providerApiFailure('OpenAI', openAiResponse)
   }
 
   const responsePayload = (await openAiResponse.json()) as unknown
@@ -376,19 +500,15 @@ async function runOpenAiAnalysis(requestBody: AnalyseRequest) {
   }
 }
 
-async function runClaudeAnalysis(requestBody: AnalyseRequest) {
-  const apiKey = typeof requestBody.apiKey === 'string' ? requestBody.apiKey.trim() : ''
-  if (!apiKey) {
-    return { statusCode: 401, payload: { error: 'Claude needs a session API key for live analysis.' } }
-  }
+async function runClaudeAnalysis(requestBody: AnalyseRequest): Promise<ApiResult> {
+  const validationError = validateLiveRequest(requestBody, 'Claude')
+  if (validationError) return validationError
 
+  const apiKey = typeof requestBody.apiKey === 'string' ? requestBody.apiKey.trim() : ''
   const systemPrompt = cleanPrompt(requestBody.systemPrompt)
   const userPrompt = cleanPrompt(requestBody.userPrompt)
-  if (!systemPrompt || !userPrompt) {
-    return { statusCode: 400, payload: { error: 'Analysis prompts are missing.' } }
-  }
 
-  const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+  const claudeResult = await fetchProviderResponse('Claude', 'https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'anthropic-version': '2023-06-01',
@@ -413,15 +533,12 @@ async function runClaudeAnalysis(requestBody: AnalyseRequest) {
       },
     }),
   })
+  if (claudeResult.kind === 'failure') return claudeResult.failure
+
+  const claudeResponse = claudeResult.response
 
   if (!claudeResponse.ok) {
-    const statusText =
-      claudeResponse.status === 401
-        ? 'Claude rejected this session API key.'
-        : claudeResponse.status === 429
-          ? 'Claude rate limited this request.'
-          : `Claude returned HTTP ${claudeResponse.status}.`
-    return { statusCode: claudeResponse.status === 401 ? 401 : 502, payload: { error: statusText } }
+    return providerApiFailure('Claude', claudeResponse)
   }
 
   const responsePayload = (await claudeResponse.json()) as unknown
@@ -452,55 +569,47 @@ async function runClaudeAnalysis(requestBody: AnalyseRequest) {
   }
 }
 
-async function runGeminiAnalysis(requestBody: AnalyseRequest) {
-  const apiKey = typeof requestBody.apiKey === 'string' ? requestBody.apiKey.trim() : ''
-  if (!apiKey) {
-    return { statusCode: 401, payload: { error: 'Gemini needs a session API key for live analysis.' } }
-  }
+async function runGeminiAnalysis(requestBody: AnalyseRequest): Promise<ApiResult> {
+  const validationError = validateLiveRequest(requestBody, 'Gemini')
+  if (validationError) return validationError
 
+  const apiKey = typeof requestBody.apiKey === 'string' ? requestBody.apiKey.trim() : ''
   const systemPrompt = cleanPrompt(requestBody.systemPrompt)
   const userPrompt = cleanPrompt(requestBody.userPrompt)
-  if (!systemPrompt || !userPrompt) {
-    return { statusCode: 400, payload: { error: 'Analysis prompts are missing.' } }
-  }
 
   const model = encodeURIComponent(cleanGeminiModel(requestBody.model))
-  const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: systemPrompt }],
+  const geminiResult = await fetchProviderResponse(
+    'Gemini',
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
       },
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: userPrompt }],
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
         },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseJsonSchema: rolefitAnalysisSchema,
-      },
-    }),
-  })
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: userPrompt }],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseJsonSchema: rolefitAnalysisSchema,
+        },
+      }),
+    },
+  )
+  if (geminiResult.kind === 'failure') return geminiResult.failure
+
+  const geminiResponse = geminiResult.response
 
   if (!geminiResponse.ok) {
-    const errorPayload = (await geminiResponse.json().catch(() => undefined)) as unknown
-    const apiErrorMessage = extractApiErrorMessage(errorPayload)
-    const rejectedKey =
-      (geminiResponse.status === 400 || geminiResponse.status === 401 || geminiResponse.status === 403) &&
-      /api[_\s-]?key|invalid.*key/i.test(apiErrorMessage)
-    const statusText =
-      rejectedKey
-        ? 'Gemini rejected this session API key.'
-        : geminiResponse.status === 429
-          ? 'Gemini rate limited this request.'
-          : `Gemini returned HTTP ${geminiResponse.status}.`
-    return { statusCode: rejectedKey ? 401 : 502, payload: { error: statusText } }
+    return providerApiFailure('Gemini', geminiResponse)
   }
 
   const responsePayload = (await geminiResponse.json()) as unknown

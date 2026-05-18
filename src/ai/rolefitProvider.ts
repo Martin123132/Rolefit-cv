@@ -74,6 +74,13 @@ type LiveAnalysisResponse<TAnalysis extends RolefitAnalysisSnapshot> = {
   transportLabel?: string
 }
 
+export const liveProviderInputTextLimit = 64 * 1024
+export const liveProviderModelIdLimit = 120
+export const liveProviderApiKeyLimit = 8 * 1024
+export const liveProviderTimeoutMs = 45_000
+export const liveProviderInputLimitLabel = '64 KB'
+export const liveProviderTimeoutLabel = '45 seconds'
+
 const providerLabels: Record<ProviderId, string> = {
   claude: 'Claude',
   gemini: 'Gemini',
@@ -151,19 +158,45 @@ export function buildRolefitPromptContract(cvText: string, jobText: string): Rol
   }
 }
 
+function assertLiveProviderRequestFits({
+  apiKey,
+  cvText,
+  jobText,
+  model,
+  providerLabel,
+}: {
+  apiKey: string
+  cvText: string
+  jobText: string
+  model: string
+  providerLabel: string
+}) {
+  if (apiKey.trim().length > liveProviderApiKeyLimit) {
+    throw new Error(`${providerLabel} session key is too long for a browser-session request.`)
+  }
+
+  if (model.trim().length > liveProviderModelIdLimit) {
+    throw new Error(`${providerLabel} model ID is too long. Use a model ID under ${liveProviderModelIdLimit} characters.`)
+  }
+
+  if (cvText.trim().length > liveProviderInputTextLimit) {
+    throw new Error(`CV text is over the ${liveProviderInputLimitLabel} live request limit. Shorten it before trying ${providerLabel}.`)
+  }
+
+  if (jobText.trim().length > liveProviderInputTextLimit) {
+    throw new Error(`Job advert text is over the ${liveProviderInputLimitLabel} live request limit. Shorten it before trying ${providerLabel}.`)
+  }
+}
+
 async function runLiveProviderProxy<TAnalysis extends RolefitAnalysisSnapshot>({
   apiKey,
   contract,
-  cvText,
-  jobText,
   model,
   provider,
   providerLabel,
 }: {
   apiKey: string
   contract: RolefitPromptContract
-  cvText: string
-  jobText: string
   model: string
   provider: Exclude<ProviderId, 'mock'>
   providerLabel: string
@@ -175,8 +208,6 @@ async function runLiveProviderProxy<TAnalysis extends RolefitAnalysisSnapshot>({
     },
     body: JSON.stringify({
       apiKey,
-      cvText,
-      jobText,
       model,
       provider,
       systemPrompt: contract.systemPrompt,
@@ -232,11 +263,17 @@ export async function runRolefitProvider<TAnalysis extends RolefitAnalysisSnapsh
   if (hasSessionKey) {
     const liveProvider = provider
     try {
+      assertLiveProviderRequestFits({
+        apiKey,
+        cvText,
+        jobText,
+        model,
+        providerLabel,
+      })
+
       const liveRun = await runLiveProviderProxy<TAnalysis>({
         apiKey,
         contract,
-        cvText,
-        jobText,
         model,
         provider: liveProvider,
         providerLabel,

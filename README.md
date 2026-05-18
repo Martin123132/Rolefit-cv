@@ -31,6 +31,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Session-only bring-your-own-key field.
 - Local provider proxy for live analysis requests.
 - Provider contract card showing provider, model, contract version, and key state.
+- Live-provider guardrails for request size, timeout, and local fallback.
 - Evidence map for job requirements.
 - Claim safety review before rewriting.
 - Editable targeted CV rewrite.
@@ -53,6 +54,8 @@ The local mock sends no request and needs no key.
 
 For OpenAI, Claude, and Gemini, the app uses a local Vite proxy endpoint so provider requests do not run directly from browser code. The API key is held in browser session state for the request and is not saved to local draft storage.
 
+Live-provider requests are capped at 64 KB of CV text and 64 KB of job text. The local proxy also protects the app with a 45 second provider timeout and clearer messages for rejected keys, rate limits, request-shape problems, and provider outages.
+
 If a live provider request fails, Rolefit falls back to local analysis so the workflow can continue.
 
 ## Privacy Notes
@@ -63,6 +66,7 @@ If a live provider request fails, Rolefit falls back to local analysis so the wo
 - API keys are not saved in local draft storage.
 - Local draft storage can save CV text, job text, provider/model choice, and practice notes so the user does not lose work.
 - Live provider analysis sends the CV and job advert to the selected AI provider when the user runs analysis with a session key present.
+- Failed or timed-out live requests keep the local workflow available instead of saving or retrying keys silently.
 
 ## One-Click Run On Windows
 
@@ -109,7 +113,7 @@ npm run build
 ## Current Limitations
 
 - Scanned or image-only PDFs are not OCR processed yet.
-- Live provider support is still early and should be hardened before wider use.
+- Live provider support is still early and needs prompt-quality evaluation before wider use.
 - The app is local-first; hosted deployment and account systems are not part of this stage.
 - The analysis is a production foundation, not a final career-advice guarantee.
 
@@ -118,7 +122,6 @@ npm run build
 Planned next slices:
 
 - OCR support for scanned PDFs.
-- Stronger provider error handling and request limits.
 - Better live-provider prompt evaluation.
 - More interview modes, including follow-up questions.
 - Saved application history.
