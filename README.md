@@ -12,6 +12,8 @@ The current app runs locally and supports bring-your-own-key live analysis for O
 
 Live provider calls use the same Rolefit analysis contract as the local mock. If a live request fails, the app falls back to local analysis so the workflow can continue.
 
+The interview coach now turns each analysed CV into a question bank, STAR answer builder, answer feedback lights, and a downloadable interview pack. The goal is to help the person practise the evidence behind the CV, not just produce better-looking wording.
+
 ## One-click run on Windows
 
 1. Install [Node.js LTS](https://nodejs.org/en/download) if needed.

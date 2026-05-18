@@ -9,7 +9,6 @@ import {
   FileText,
   KeyRound,
   Lock,
-  MessageSquareText,
   Mic,
   RefreshCw,
   SearchCheck,
@@ -64,14 +63,37 @@ type RewriteSafetyItem = {
   target: RewriteFieldTarget
   text: string
 }
+type StarDraft = {
+  action: string
+  result: string
+  situation: string
+  task: string
+}
+type InterviewQuestion = {
+  category: string
+  focus: string
+  id: string
+  prompt: string
+  proof: string
+  risk: string
+  status: StepStatus
+}
+type AnswerFeedbackItem = {
+  detail: string
+  id: string
+  label: string
+  status: StepStatus
+}
 
 type SavedDraft = {
   confidence: number
   cvText: string
+  interviewStar: StarDraft
   jobText: string
   model: string
   practiceAnswer: string
   provider: ProviderId
+  selectedQuestion: number
 }
 
 type EvidenceItem = {
@@ -122,6 +144,13 @@ const importTargetLabels: Record<ImportTarget, string> = {
 const emptyImportStatus: ImportStatus = {
   message: '',
   state: 'idle',
+}
+
+const emptyStarDraft: StarDraft = {
+  action: '',
+  result: '',
+  situation: '',
+  task: '',
 }
 
 const modelOptions: Record<ProviderId, string[]> = {
@@ -339,6 +368,18 @@ function readImportedText(file: File) {
   })
 }
 
+function readSavedStarDraft(value: unknown): StarDraft | undefined {
+  if (!value || typeof value !== 'object') return undefined
+
+  const candidate = value as Partial<StarDraft>
+  return {
+    action: typeof candidate.action === 'string' ? candidate.action : '',
+    result: typeof candidate.result === 'string' ? candidate.result : '',
+    situation: typeof candidate.situation === 'string' ? candidate.situation : '',
+    task: typeof candidate.task === 'string' ? candidate.task : '',
+  }
+}
+
 function loadSavedDraft(): Partial<SavedDraft> {
   if (typeof window === 'undefined') return {}
 
@@ -353,10 +394,12 @@ function loadSavedDraft(): Partial<SavedDraft> {
     return {
       confidence: typeof parsed.confidence === 'number' ? Math.min(100, Math.max(0, parsed.confidence)) : undefined,
       cvText: typeof parsed.cvText === 'string' ? parsed.cvText : undefined,
+      interviewStar: readSavedStarDraft(parsed.interviewStar),
       jobText: typeof parsed.jobText === 'string' ? parsed.jobText : undefined,
       model,
       practiceAnswer: typeof parsed.practiceAnswer === 'string' ? parsed.practiceAnswer : undefined,
       provider,
+      selectedQuestion: typeof parsed.selectedQuestion === 'number' ? Math.max(0, parsed.selectedQuestion) : undefined,
     }
   } catch {
     return {}
@@ -438,15 +481,226 @@ function buildAnalysis(cv: string, job: string): Analysis {
   }
 }
 
-function scoreAnswer(answer: string, analysis: Analysis, confidence: number) {
+function interviewQuestionId(prompt: string, index: number) {
+  const slug = normalise(prompt).trim().replace(/\s+/g, '-').slice(0, 52)
+  return slug || `question-${index + 1}`
+}
+
+function interviewQuestionsForAnalysis(analysis: Analysis): InterviewQuestion[] {
+  const questions: InterviewQuestion[] = []
+  const primaryEvidence = analysis.evidence[0]
+  const primaryGap = analysis.gaps[0]
+
+  function pushQuestion(question: Omit<InterviewQuestion, 'id'>) {
+    const id = interviewQuestionId(question.prompt, questions.length)
+    if (questions.some((item) => item.id === id || item.prompt === question.prompt)) return
+    questions.push({ ...question, id })
+  }
+
+  analysis.questions.forEach((prompt, index) => {
+    const isGapQuestion = index === 1 && primaryGap
+    pushQuestion({
+      category: isGapQuestion ? 'Handle a gap' : index === 2 ? 'CV ownership' : 'Prove experience',
+      focus: isGapQuestion ? primaryGap : primaryEvidence?.term ?? analysis.matched[0] ?? analysis.title,
+      prompt,
+      proof: isGapQuestion
+        ? `Use nearby proof, then name how you would close ${primaryGap}.`
+        : primaryEvidence?.line ?? 'Choose one clear CV example before answering.',
+      risk: isGapQuestion
+        ? 'Do not pretend the gap is already solved.'
+        : 'Do not speak in broad strengths without a specific example.',
+      status: isGapQuestion ? 'next' : primaryEvidence ? 'done' : 'next',
+    })
+  })
+
+  analysis.evidence.slice(0, 3).forEach((item) => {
+    pushQuestion({
+      category: 'Proof pressure',
+      focus: item.term,
+      prompt: `Your CV says: "${item.line}" What happened, what did you personally do, and what changed?`,
+      proof: item.line,
+      risk: 'Do not recite the CV line. Explain the decision, action, and result behind it.',
+      status: 'done',
+    })
+  })
+
+  analysis.gaps.slice(0, 2).forEach((term) => {
+    pushQuestion({
+      category: 'Handle a gap',
+      focus: term,
+      prompt: `This role asks for ${term}. What honest adjacent experience can you offer without overstating it?`,
+      proof: `Connect a nearby example, then state what you would learn or do next for ${term}.`,
+      risk: 'A confident answer can still admit a gap. Bluffing is the bigger risk.',
+      status: 'next',
+    })
+  })
+
+  pushQuestion({
+    category: 'Role motivation',
+    focus: analysis.title,
+    prompt: `Why does your experience make sense for ${analysis.title}, not just any job?`,
+    proof:
+      analysis.evidence.length > 0
+        ? `Anchor the answer in ${phraseList(analysis.evidence.slice(0, 3).map((item) => item.term))}.`
+        : 'Anchor the answer in one CV example and one job requirement.',
+    risk: 'Avoid a generic motivation answer that could be said to any employer.',
+    status: analysis.evidence.length > 0 ? 'done' : 'next',
+  })
+
+  return questions.slice(0, 7)
+}
+
+function wordCount(text: string) {
+  return text.trim().split(/\s+/).filter(Boolean).length
+}
+
+function starDraftHasContent(starDraft: StarDraft) {
+  return Object.values(starDraft).some((value) => value.trim().length > 0)
+}
+
+function starDraftReady(starDraft: StarDraft) {
+  return Object.values(starDraft).every((value) => value.trim().length >= 12)
+}
+
+function starAnswerFromDraft(starDraft: StarDraft, question: InterviewQuestion) {
+  const sections = [
+    ['Situation', starDraft.situation],
+    ['Task', starDraft.task],
+    ['Action', starDraft.action],
+    ['Result', starDraft.result],
+  ]
+    .filter(([, value]) => value.trim())
+    .map(([label, value]) => `${label}: ${value.trim()}`)
+
+  if (sections.length === 0) {
+    return `Question: ${question.prompt}\n\nSituation:\nTask:\nAction:\nResult:`
+  }
+
+  return [`Question: ${question.prompt}`, '', ...sections].join('\n')
+}
+
+function starDraftForQuestion(analysis: Analysis, question: InterviewQuestion): StarDraft {
+  const proofLine = question.proof && !question.proof.startsWith('Use ') ? question.proof : analysis.evidence[0]?.line
+  const roleTerms = analysis.matched.length > 0 ? phraseList(analysis.matched.slice(0, 3)) : question.focus
+  const resultLine = analysis.evidence.find((item) =>
+    /\b(reduced|improved|created|trained|built|saved|increased|decreased|resolved|delivered|response|risk|consistent)\b/i.test(
+      item.line,
+    ),
+  )?.line
+
+  return {
+    action:
+      question.status === 'next'
+        ? `I would connect nearby experience to ${question.focus}, explain the work I have already done, and be clear about how I would close the gap.`
+        : `I would explain the actions I personally took, the people involved, and how the example proves ${question.focus} for this role.`,
+    result: resultLine
+      ? `The result was visible in this CV proof: ${resultLine}`
+      : 'I would state the result I can prove, then keep it honest if the CV does not show a number.',
+    situation: proofLine
+      ? `In the CV example, ${proofLine}`
+      : `In a real situation where ${question.focus} mattered, I would start with the problem and who it affected.`,
+    task: `The task was to show ${roleTerms} in a way that fits ${analysis.title} without sounding generic.`,
+  }
+}
+
+function answerFeedbackFor(
+  answer: string,
+  analysis: Analysis,
+  confidence: number,
+  starDraft: StarDraft,
+): AnswerFeedbackItem[] {
+  const cleanAnswer = answer.trim()
+  const answerWords = wordCount(cleanAnswer)
+  const termHits = analysis.requirementMap.filter((item) => textContains(cleanAnswer, item.term)).length
+  const evidenceHits = analysis.evidence.filter(
+    (item) => textContains(cleanAnswer, item.term) || textContains(cleanAnswer, item.line.split(/\s+/).slice(0, 5).join(' ')),
+  ).length
+  const hasResultLanguage = /\b(\d+%?|\d+\+?|reduced|improved|created|trained|built|saved|increased|decreased|resolved|delivered|won|cut|grew)\b/i.test(
+    cleanAnswer,
+  )
+  const gapMentioned = analysis.gaps.some((term) => textContains(cleanAnswer, term))
+  const hasGapPlan = /\b(learn|learning|close|develop|bridge|adjacent|nearby|honest|not yet|would)\b/i.test(cleanAnswer)
+
+  return [
+    {
+      detail: starDraftReady(starDraft)
+        ? 'The STAR builder has enough material for a complete answer.'
+        : answerWords >= 45
+          ? 'The answer has shape, but the STAR boxes would make it easier to practise.'
+          : 'Add a situation, task, action, and result before marking practice done.',
+      id: 'star',
+      label: 'STAR structure',
+      status: starDraftReady(starDraft) ? 'done' : answerWords >= 45 ? 'next' : 'blocked',
+    },
+    {
+      detail:
+        evidenceHits > 0
+          ? 'The answer is tied to direct CV proof.'
+          : termHits > 0
+            ? 'The answer names role language, but needs a clearer proof line.'
+            : 'Use one mapped CV proof line before claiming the strength.',
+      id: 'evidence',
+      label: 'CV evidence',
+      status: evidenceHits > 0 ? 'done' : termHits > 0 ? 'next' : 'blocked',
+    },
+    {
+      detail:
+        termHits >= 2
+          ? 'The answer clearly speaks to this job advert.'
+          : termHits === 1
+            ? 'One role requirement is present. Add one more job-specific link.'
+            : 'Name the role requirement this answer is proving.',
+      id: 'role',
+      label: 'Role relevance',
+      status: termHits >= 2 ? 'done' : termHits === 1 ? 'next' : 'blocked',
+    },
+    {
+      detail: hasResultLanguage
+        ? 'There is a result or outcome signal.'
+        : 'Add what changed: time saved, risk reduced, customer impact, quality, or team benefit.',
+      id: 'result',
+      label: 'Result signal',
+      status: hasResultLanguage ? 'done' : 'next',
+    },
+    {
+      detail:
+        analysis.gaps.length === 0
+          ? 'No major mapped gaps need handling in this answer.'
+          : gapMentioned && hasGapPlan
+            ? 'The gap is handled calmly without pretending.'
+            : 'If asked about a gap, connect adjacent evidence and say how you would close it.',
+      id: 'gap',
+      label: 'Gap honesty',
+      status: analysis.gaps.length === 0 || (gapMentioned && hasGapPlan) ? 'done' : 'next',
+    },
+    {
+      detail:
+        confidence >= 70
+          ? 'Confidence is high enough for a calm delivery pass.'
+          : confidence >= 45
+            ? 'Confidence is usable, but rehearse the first 20 seconds.'
+            : 'Raise confidence by shortening the answer and anchoring it in proof.',
+      id: 'confidence',
+      label: 'Confidence',
+      status: confidence >= 70 ? 'done' : confidence >= 45 ? 'next' : 'blocked',
+    },
+  ]
+}
+
+function scoreAnswer(answer: string, analysis: Analysis, confidence: number, starDraft: StarDraft) {
+  if (!answer.trim()) return 0
+  const feedbackScore = answerFeedbackFor(answer, analysis, confidence, starDraft).reduce((total, item) => {
+    if (item.status === 'done') return total + 16
+    if (item.status === 'next') return total + 8
+    return total
+  }, 0)
   const answerTerms = extractTerms(answer)
   const termHits = analysis.matched.filter(
     (term) => answerTerms.includes(term as SkillTerm) || textContains(answer, term),
   ).length
-  const lengthScore = Math.min(35, Math.floor(answer.trim().length / 14))
-  const evidenceScore = Math.min(40, termHits * 12)
-  const confidenceScore = Math.round(confidence / 5)
-  return Math.min(100, lengthScore + evidenceScore + confidenceScore)
+  const lengthScore = Math.min(12, Math.floor(answer.trim().length / 42))
+  const evidenceScore = Math.min(12, termHits * 4)
+  return Math.min(100, feedbackScore + lengthScore + evidenceScore)
 }
 
 function rewriteFromAnalysis(analysis: Analysis): RewriteDraft {
@@ -610,17 +864,30 @@ function rewriteSafetyItems(
   }))
 }
 
+function starDraftExportLines(starDraft: StarDraft) {
+  return [
+    `Situation: ${starDraft.situation.trim() || 'Add the scene.'}`,
+    `Task: ${starDraft.task.trim() || 'Add the responsibility or problem.'}`,
+    `Action: ${starDraft.action.trim() || 'Add what you personally did.'}`,
+    `Result: ${starDraft.result.trim() || 'Add what changed.'}`,
+  ]
+}
+
 function applicationPackText(
   analysis: Analysis,
   rewrite: RewriteDraft,
   practiceAnswer: string,
   confidence: number,
   evidenceChoices: Record<string, EvidenceReviewChoice>,
+  selectedQuestion: InterviewQuestion,
+  starDraft: StarDraft,
+  answerFeedback: AnswerFeedbackItem[],
 ) {
   const reviewLines = analysis.requirementMap.map((item) => {
     const choice = evidenceChoices[item.term] ?? 'needs-proof'
     return `- ${item.term}: ${evidenceReviewLabels[choice]}`
   })
+  const feedbackLines = answerFeedback.map((item) => `- ${item.label}: ${statusLabels[item.status]} - ${item.detail}`)
 
   return [
     `Rolefit CV application pack: ${analysis.title}`,
@@ -637,8 +904,19 @@ function applicationPackText(
     'Requirement review',
     ...reviewLines,
     '',
-    'Interview anchor',
+    'Interview practice question',
+    `${selectedQuestion.category}: ${selectedQuestion.prompt}`,
+    `Focus: ${selectedQuestion.focus}`,
+    `Risk: ${selectedQuestion.risk}`,
+    '',
+    'STAR answer builder',
+    ...starDraftExportLines(starDraft),
+    '',
+    'Interview answer',
     practiceAnswer.trim(),
+    '',
+    'Answer coaching lights',
+    ...feedbackLines,
     '',
     `Confidence check: ${confidence}%`,
     'Before applying: read every claim out loud and remove anything you cannot explain calmly in an interview.',
@@ -651,11 +929,15 @@ function applicationPackMarkdown(
   practiceAnswer: string,
   confidence: number,
   evidenceChoices: Record<string, EvidenceReviewChoice>,
+  selectedQuestion: InterviewQuestion,
+  starDraft: StarDraft,
+  answerFeedback: AnswerFeedbackItem[],
 ) {
   const reviewLines = analysis.requirementMap.map((item) => {
     const choice = evidenceChoices[item.term] ?? 'needs-proof'
     return `- **${item.term}:** ${evidenceReviewLabels[choice]}`
   })
+  const feedbackLines = answerFeedback.map((item) => `- **${item.label}:** ${statusLabels[item.status]} - ${item.detail}`)
   const gapLine =
     analysis.gaps.length > 0
       ? phraseList(analysis.gaps.slice(0, 4))
@@ -680,16 +962,108 @@ function applicationPackMarkdown(
     '',
     ...reviewLines,
     '',
-    '## Interview Anchor',
+    '## Interview Practice Question',
+    '',
+    `**${selectedQuestion.category}:** ${selectedQuestion.prompt}`,
+    '',
+    `- **Focus:** ${selectedQuestion.focus}`,
+    `- **Risk:** ${selectedQuestion.risk}`,
+    '',
+    '## STAR Answer Builder',
+    '',
+    ...starDraftExportLines(starDraft).map((line) => `- ${line}`),
+    '',
+    '## Interview Answer',
     '',
     ...practiceAnswer
       .trim()
       .split('\n')
       .map((line) => `> ${line}`),
     '',
+    '## Answer Coaching Lights',
+    '',
+    ...feedbackLines,
+    '',
     `**Confidence check:** ${confidence}%`,
     '',
     'Before applying: read every claim out loud and remove anything you cannot explain calmly in an interview.',
+  ].join('\n')
+}
+
+function interviewPackText(
+  analysis: Analysis,
+  questions: InterviewQuestion[],
+  selectedQuestion: InterviewQuestion,
+  starDraft: StarDraft,
+  practiceAnswer: string,
+  confidence: number,
+  answerFeedback: AnswerFeedbackItem[],
+) {
+  return [
+    `Rolefit CV interview pack: ${analysis.title}`,
+    '',
+    'Practice question bank',
+    ...questions.map((question, index) => `${index + 1}. [${question.category}] ${question.prompt}`),
+    '',
+    'Selected practice question',
+    `${selectedQuestion.category}: ${selectedQuestion.prompt}`,
+    `Focus: ${selectedQuestion.focus}`,
+    `Proof to use: ${selectedQuestion.proof}`,
+    `Risk to avoid: ${selectedQuestion.risk}`,
+    '',
+    'STAR answer builder',
+    ...starDraftExportLines(starDraft),
+    '',
+    'Draft spoken answer',
+    practiceAnswer.trim(),
+    '',
+    'Coaching lights',
+    ...answerFeedback.map((item) => `- ${item.label}: ${statusLabels[item.status]} - ${item.detail}`),
+    '',
+    `Confidence: ${confidence}%`,
+  ].join('\n')
+}
+
+function interviewPackMarkdown(
+  analysis: Analysis,
+  questions: InterviewQuestion[],
+  selectedQuestion: InterviewQuestion,
+  starDraft: StarDraft,
+  practiceAnswer: string,
+  confidence: number,
+  answerFeedback: AnswerFeedbackItem[],
+) {
+  return [
+    `# Rolefit CV Interview Pack: ${analysis.title}`,
+    '',
+    '## Practice Question Bank',
+    '',
+    ...questions.map((question, index) => `${index + 1}. **${question.category}:** ${question.prompt}`),
+    '',
+    '## Selected Practice Question',
+    '',
+    `**${selectedQuestion.category}:** ${selectedQuestion.prompt}`,
+    '',
+    `- **Focus:** ${selectedQuestion.focus}`,
+    `- **Proof to use:** ${selectedQuestion.proof}`,
+    `- **Risk to avoid:** ${selectedQuestion.risk}`,
+    '',
+    '## STAR Answer Builder',
+    '',
+    ...starDraftExportLines(starDraft).map((line) => `- ${line}`),
+    '',
+    '## Draft Spoken Answer',
+    '',
+    ...practiceAnswer
+      .trim()
+      .split('\n')
+      .map((line) => `> ${line}`),
+    '',
+    '## Coaching Lights',
+    '',
+    ...answerFeedback.map((item) => `- **${item.label}:** ${statusLabels[item.status]} - ${item.detail}`),
+    '',
+    `**Confidence:** ${confidence}%`,
   ].join('\n')
 }
 
@@ -817,11 +1191,12 @@ function App() {
   const [cvText, setCvText] = useState(savedDraft.cvText ?? seedCv)
   const [jobText, setJobText] = useState(savedDraft.jobText ?? seedJob)
   const [activeTab, setActiveTab] = useState<TabId>('tailor')
-  const [selectedQuestion, setSelectedQuestion] = useState(0)
+  const [selectedQuestion, setSelectedQuestion] = useState(savedDraft.selectedQuestion ?? 0)
   const [practiceAnswer, setPracticeAnswer] = useState(
     savedDraft.practiceAnswer ??
       'In customer service I handled delayed order problems by communicating clearly with customers, updating CRM notes, and working with warehouse, sales, and finance stakeholders. I used reporting to spot refund risk, documented the process, and trained new starters so the support team could stay consistent during busy weeks.',
   )
+  const [interviewStar, setInterviewStar] = useState<StarDraft>(savedDraft.interviewStar ?? emptyStarDraft)
   const [confidence, setConfidence] = useState(savedDraft.confidence ?? 62)
   const [lastRun, setLastRun] = useState('Ready')
   const [copied, setCopied] = useState<string | null>(null)
@@ -863,9 +1238,26 @@ function App() {
   const draftAnalysis = useMemo(() => buildAnalysis(cvText, jobText), [cvText, jobText])
   const currentAnalysisRun = importReady && analysisRunKey === analysisKey ? analysisRun : null
   const analysis = currentAnalysisRun?.analysis ?? draftAnalysis
+  const interviewQuestions = useMemo(() => interviewQuestionsForAnalysis(analysis), [analysis])
+  const selectedQuestionIndex = Math.min(selectedQuestion, Math.max(interviewQuestions.length - 1, 0))
+  const selectedInterviewQuestion =
+    interviewQuestions[selectedQuestionIndex] ??
+    ({
+      category: 'Practice',
+      focus: analysis.title,
+      id: 'practice-question',
+      prompt: `Why are you a strong fit for ${analysis.title}?`,
+      proof: 'Use one clear CV example.',
+      risk: 'Avoid generic strengths.',
+      status: 'next',
+    } satisfies InterviewQuestion)
+  const answerFeedback = useMemo(
+    () => answerFeedbackFor(practiceAnswer, analysis, confidence, interviewStar),
+    [analysis, confidence, interviewStar, practiceAnswer],
+  )
   const answerScore = useMemo(
-    () => scoreAnswer(practiceAnswer, analysis, confidence),
-    [analysis, confidence, practiceAnswer],
+    () => scoreAnswer(practiceAnswer, analysis, confidence, interviewStar),
+    [analysis, confidence, interviewStar, practiceAnswer],
   )
   const hasCurrentAnalysis = Boolean(currentAnalysisRun)
   const requirementTotal = hasCurrentAnalysis ? analysis.requirementMap.length : 0
@@ -903,19 +1295,83 @@ function App() {
   const rewriteDone = evidenceReviewed && !rewriteHasBlockedClaim && rewriteDoneKey === rewriteReviewKey
   const coachDone = rewriteDone && coachDoneKey === rewriteReviewKey
   const practiceKey = useMemo(
-    () => `${rewriteReviewKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
-    [confidence, practiceAnswer, rewriteReviewKey],
+    () =>
+      [
+        rewriteReviewKey,
+        '---rolefit-question---',
+        selectedInterviewQuestion.id,
+        '---rolefit-star---',
+        interviewStar.situation.trim(),
+        interviewStar.task.trim(),
+        interviewStar.action.trim(),
+        interviewStar.result.trim(),
+        '---rolefit-answer---',
+        practiceAnswer.trim(),
+        '---confidence---',
+        confidence,
+      ].join('\n'),
+    [confidence, interviewStar, practiceAnswer, rewriteReviewKey, selectedInterviewQuestion.id],
   )
   const packText = useMemo(
-    () => applicationPackText(analysis, rewriteDraft, practiceAnswer, confidence, evidenceChoices),
-    [analysis, confidence, evidenceChoices, practiceAnswer, rewriteDraft],
+    () =>
+      applicationPackText(
+        analysis,
+        rewriteDraft,
+        practiceAnswer,
+        confidence,
+        evidenceChoices,
+        selectedInterviewQuestion,
+        interviewStar,
+        answerFeedback,
+      ),
+    [analysis, answerFeedback, confidence, evidenceChoices, interviewStar, practiceAnswer, rewriteDraft, selectedInterviewQuestion],
   )
   const packMarkdown = useMemo(
-    () => applicationPackMarkdown(analysis, rewriteDraft, practiceAnswer, confidence, evidenceChoices),
-    [analysis, confidence, evidenceChoices, practiceAnswer, rewriteDraft],
+    () =>
+      applicationPackMarkdown(
+        analysis,
+        rewriteDraft,
+        practiceAnswer,
+        confidence,
+        evidenceChoices,
+        selectedInterviewQuestion,
+        interviewStar,
+        answerFeedback,
+      ),
+    [analysis, answerFeedback, confidence, evidenceChoices, interviewStar, practiceAnswer, rewriteDraft, selectedInterviewQuestion],
+  )
+  const interviewPack = useMemo(
+    () =>
+      interviewPackText(
+        analysis,
+        interviewQuestions,
+        selectedInterviewQuestion,
+        interviewStar,
+        practiceAnswer,
+        confidence,
+        answerFeedback,
+      ),
+    [analysis, answerFeedback, confidence, interviewQuestions, interviewStar, practiceAnswer, selectedInterviewQuestion],
+  )
+  const interviewPackMd = useMemo(
+    () =>
+      interviewPackMarkdown(
+        analysis,
+        interviewQuestions,
+        selectedInterviewQuestion,
+        interviewStar,
+        practiceAnswer,
+        confidence,
+        answerFeedback,
+      ),
+    [analysis, answerFeedback, confidence, interviewQuestions, interviewStar, practiceAnswer, selectedInterviewQuestion],
   )
   const packFilenameBase = useMemo(() => `rolefit-cv-${filenameSlug(analysis.title)}`, [analysis.title])
-  const answerReady = practiceAnswer.trim().length >= 80 && answerScore >= 45
+  const answerReady =
+    practiceAnswer.trim().length >= 80 &&
+    answerScore >= 55 &&
+    answerFeedback.every((item) => item.status !== 'blocked') &&
+    starDraftReady(interviewStar)
   const interviewDone = coachDone && interviewDoneKey === practiceKey
   const packDone = interviewDone && packDoneKey === practiceKey
   const providerStatus =
@@ -1046,13 +1502,15 @@ function App() {
     const draft: SavedDraft = {
       confidence,
       cvText,
+      interviewStar,
       jobText,
       model: selectedModel,
       practiceAnswer,
       provider,
+      selectedQuestion: selectedQuestionIndex,
     }
     window.localStorage.setItem(draftStorageKey, JSON.stringify(draft))
-  }, [confidence, cvText, jobText, practiceAnswer, provider, selectedModel])
+  }, [confidence, cvText, interviewStar, jobText, practiceAnswer, provider, selectedModel, selectedQuestionIndex])
 
   function handleProviderChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextProvider = event.target.value as ProviderId
@@ -1106,6 +1564,17 @@ function App() {
         bullets: current.bullets.map((item, index) => (index === target.index ? text : item)),
       }
     })
+  }
+
+  function updateInterviewStar(field: keyof StarDraft, text: string) {
+    setInterviewStar((current) => ({
+      ...current,
+      [field]: text,
+    }))
+  }
+
+  function useStarAsAnswer() {
+    setPracticeAnswer(starAnswerFromDraft(interviewStar, selectedInterviewQuestion))
   }
 
   function applyHonestRewrite(item: RewriteSafetyItem) {
@@ -1246,6 +1715,7 @@ function App() {
         model: selectedModel,
         provider,
       })
+      const nextInterviewQuestion = interviewQuestionsForAnalysis(nextRun.analysis)[0]
 
       setAnalysisRun(nextRun)
       setAnalysisRunKey(analysisKey)
@@ -1257,6 +1727,8 @@ function App() {
       setCoachDoneKey('')
       setInterviewDoneKey('')
       setPackDoneKey('')
+      setSelectedQuestion(0)
+      setInterviewStar(nextInterviewQuestion ? starDraftForQuestion(nextRun.analysis, nextInterviewQuestion) : emptyStarDraft)
       setActiveTab('tailor')
       setLastRun(
         `Updated ${new Date().toLocaleTimeString([], {
@@ -1297,6 +1769,16 @@ function App() {
         : downloadTextFile(`${packFilenameBase}.txt`, packText, 'text/plain')
 
     setDownloaded(didDownload ? format : `${format}-error`)
+    window.setTimeout(() => setDownloaded(null), 1400)
+  }
+
+  function downloadInterviewPack(format: 'md' | 'txt') {
+    const didDownload =
+      format === 'md'
+        ? downloadTextFile(`${packFilenameBase}-interview.md`, interviewPackMd, 'text/markdown')
+        : downloadTextFile(`${packFilenameBase}-interview.txt`, interviewPack, 'text/plain')
+
+    setDownloaded(didDownload ? `interview-${format}` : `interview-${format}-error`)
     window.setTimeout(() => setDownloaded(null), 1400)
   }
 
@@ -1883,6 +2365,51 @@ function App() {
                 </div>
                 <Brain size={22} className="panel-icon" aria-hidden="true" />
               </div>
+              <div className={`coach-readiness ${coachDone ? 'done' : 'next'}`}>
+                <span className={`status-light ${coachDone ? 'done' : 'next'}`} aria-hidden="true"></span>
+                <div>
+                  <strong>{coachDone ? 'Coach pass complete' : 'Coach the story next'}</strong>
+                  <span>Turn the rewrite into proof, gap handling, and a calm spoken version before practice.</span>
+                </div>
+              </div>
+              <div className="coach-grid">
+                <section className="coach-card">
+                  <span className="section-kicker">Proof anchors</span>
+                  <div className="coach-mini-list">
+                    {analysis.evidence.length > 0 ? (
+                      analysis.evidence.slice(0, 3).map((item) => (
+                        <div className="coach-mini-item" key={item.term}>
+                          <span className="status-light done" aria-hidden="true"></span>
+                          <p>
+                            <strong>{item.term}</strong>
+                            {item.line}
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="empty-copy">Add one proof line before relying on confidence language.</p>
+                    )}
+                  </div>
+                </section>
+                <section className="coach-card">
+                  <span className="section-kicker">Gap handling</span>
+                  <div className="coach-mini-list">
+                    {analysis.gaps.length > 0 ? (
+                      analysis.gaps.slice(0, 3).map((term) => (
+                        <div className="coach-mini-item" key={term}>
+                          <span className="status-light next" aria-hidden="true"></span>
+                          <p>
+                            <strong>{term}</strong>
+                            Connect adjacent proof, name the limit, then say how you would close it.
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="empty-copy">No major mapped gaps. Keep the strongest examples specific.</p>
+                    )}
+                  </div>
+                </section>
+              </div>
               <div className="coach-list">
                 {analysis.coaching.map((item) => (
                   <div className="coach-item" key={item}>
@@ -1923,24 +2450,87 @@ function App() {
                   <span className="section-kicker">Mock interview</span>
                   <h2>Practice answer</h2>
                 </div>
-                <MessageSquareText size={22} className="panel-icon" aria-hidden="true" />
+                <div className="interview-actions" aria-label="Interview pack export actions">
+                  <button className="icon-button" onClick={() => downloadInterviewPack('md')} type="button">
+                    {downloaded === 'interview-md' ? <Check size={17} /> : <Download size={17} />}
+                    <span>
+                      {downloaded === 'interview-md'
+                        ? 'Saved .md'
+                        : downloaded === 'interview-md-error'
+                          ? 'Save failed'
+                          : 'Interview .md'}
+                    </span>
+                  </button>
+                  <button className="icon-button" onClick={() => downloadInterviewPack('txt')} type="button">
+                    {downloaded === 'interview-txt' ? <Check size={17} /> : <FileText size={17} />}
+                    <span>
+                      {downloaded === 'interview-txt'
+                        ? 'Saved .txt'
+                        : downloaded === 'interview-txt-error'
+                          ? 'Save failed'
+                          : 'Interview .txt'}
+                    </span>
+                  </button>
+                </div>
               </div>
               <div className="question-stack">
-                {analysis.questions.map((question, index) => (
+                {interviewQuestions.map((question, index) => (
                   <button
-                    className={selectedQuestion === index ? 'question active' : 'question'}
-                    key={question}
+                    className={selectedQuestionIndex === index ? 'question active' : 'question'}
+                    key={question.id}
                     onClick={() => setSelectedQuestion(index)}
                     type="button"
                   >
                     <span>Q{index + 1}</span>
-                    {question}
+                    <strong>{question.category}</strong>
+                    {question.prompt}
                   </button>
                 ))}
               </div>
+              <div className={`question-brief ${selectedInterviewQuestion.status}`}>
+                <span className={`status-light ${selectedInterviewQuestion.status}`} aria-hidden="true"></span>
+                <div>
+                  <strong>{selectedInterviewQuestion.focus}</strong>
+                  <p>{selectedInterviewQuestion.proof}</p>
+                  <em>{selectedInterviewQuestion.risk}</em>
+                </div>
+              </div>
+              <div className="star-builder">
+                <div className="panel-head compact">
+                  <div>
+                    <span className="section-kicker">STAR builder</span>
+                    <h3>Build the spoken answer</h3>
+                  </div>
+                  <button
+                    className="icon-button"
+                    disabled={!starDraftHasContent(interviewStar)}
+                    onClick={useStarAsAnswer}
+                    type="button"
+                  >
+                    <Sparkles size={16} aria-hidden="true" />
+                    <span>Use STAR</span>
+                  </button>
+                </div>
+                <div className="star-grid">
+                  {(['situation', 'task', 'action', 'result'] as const).map((field) => (
+                    <label className="star-field" key={field}>
+                      <span>{field}</span>
+                      <textarea
+                        aria-label={`STAR ${field}`}
+                        onChange={(event) => updateInterviewStar(field, event.target.value)}
+                        rows={3}
+                        value={interviewStar[field]}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
               <label className="answer-box">
-                <span>{analysis.questions[selectedQuestion]}</span>
-                <textarea value={practiceAnswer} onChange={(event) => setPracticeAnswer(event.target.value)} />
+                <span>{selectedInterviewQuestion.prompt}</span>
+                <textarea
+                  value={practiceAnswer}
+                  onChange={(event) => setPracticeAnswer(event.target.value)}
+                />
               </label>
               <div className="answer-score">
                 <div>
@@ -1950,8 +2540,20 @@ function App() {
                 <p>
                   {answerReady
                     ? 'This is ready to mark complete. Keep it natural, specific, and honest.'
-                    : 'Add a specific situation, action, result, and one sentence on what you learned.'}
+                    : 'Complete the STAR builder, use one CV proof line, and make the result clear.'}
                 </p>
+              </div>
+              <div className="answer-feedback" aria-label="Answer coaching lights" aria-live="polite">
+                {answerFeedback.map((item) => (
+                  <div className={`answer-feedback-item ${item.status}`} key={item.id}>
+                    <span className={`status-light ${item.status}`} aria-hidden="true"></span>
+                    <div>
+                      <strong>{item.label}</strong>
+                      <span>{statusLabels[item.status]}</span>
+                      <p>{item.detail}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
               <button
                 className="icon-button action-button"
@@ -2088,8 +2690,24 @@ function App() {
 
               <section className="pack-card story-card">
                 <span className="section-kicker">Interview anchor</span>
+                <strong>{selectedInterviewQuestion.prompt}</strong>
                 <blockquote>{practiceAnswer.trim()}</blockquote>
                 <p>Confidence: {confidence}%. Use this as the calm version, not a script to recite word for word.</p>
+              </section>
+
+              <section className="pack-card">
+                <span className="section-kicker">Interview coach lights</span>
+                <div className="pack-list">
+                  {answerFeedback.map((item) => (
+                    <div className="pack-list-item" key={item.id}>
+                      <span className={`status-light ${item.status}`} aria-hidden="true"></span>
+                      <p>
+                        <strong>{item.label}</strong>
+                        {statusLabels[item.status]} - {item.detail}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </section>
 
               <button

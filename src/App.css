@@ -23,10 +23,14 @@
 .icon-button,
 .tab,
 .question,
+.coach-readiness,
 .coach-item,
+.coach-mini-item,
+.question-brief,
 .requirement-card,
 .pack-ready-strip,
 .pack-list-item,
+.answer-feedback-item,
 .confidence-meter {
   align-items: center;
   display: flex;
@@ -67,6 +71,9 @@ p {
 .answer-score p,
 .locked-panel p,
 .requirement-card p,
+.coach-mini-item p,
+.question-brief p,
+.answer-feedback-item p,
 .pack-card p,
 .pack-list-item p {
   color: var(--muted);
@@ -1138,6 +1145,86 @@ textarea {
   margin-top: 8px;
 }
 
+.coach-readiness {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  gap: 10px;
+  padding: 11px;
+}
+
+.coach-readiness.done {
+  background: #eff9f3;
+  border-color: #ccebd7;
+}
+
+.coach-readiness.next {
+  background: #fff8e8;
+  border-color: #f2cb77;
+}
+
+.coach-readiness strong,
+.coach-readiness span:last-child {
+  display: block;
+}
+
+.coach-readiness span:last-child {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.coach-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.coach-card,
+.star-builder,
+.answer-feedback {
+  background: #fbfcfb;
+  border: 1px solid #e0e8e5;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.coach-mini-list,
+.answer-feedback {
+  display: grid;
+  gap: 9px;
+}
+
+.coach-mini-item,
+.question-brief,
+.answer-feedback-item {
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  gap: 10px;
+  padding: 10px;
+}
+
+.coach-mini-item {
+  background: #ffffff;
+}
+
+.coach-mini-item strong,
+.question-brief strong,
+.answer-feedback-item strong,
+.answer-feedback-item span {
+  display: block;
+}
+
+.coach-mini-item strong,
+.question-brief strong {
+  color: var(--ink);
+  font-size: 13px;
+  margin-bottom: 2px;
+  text-transform: capitalize;
+}
+
 .coach-item {
   align-items: start;
   background: #fbfcfb;
@@ -1150,6 +1237,17 @@ textarea {
 .coach-item svg,
 .panel-icon {
   color: var(--green);
+}
+
+.interview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.interview-actions .icon-button {
+  min-height: 36px;
 }
 
 .pack-panel {
@@ -1261,6 +1359,8 @@ textarea {
 .question {
   background: #fbfcfb;
   color: var(--ink);
+  display: grid;
+  grid-template-columns: 28px 1fr;
   justify-content: start;
   min-height: 44px;
   padding: 9px 10px;
@@ -1280,10 +1380,69 @@ textarea {
   place-items: center;
 }
 
+.question strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
 .question.active {
   background: var(--green-dark);
   border-color: var(--green-dark);
   color: #ffffff;
+}
+
+.question.active span {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.question-brief.done {
+  background: #eff9f3;
+  border-color: #ccebd7;
+}
+
+.question-brief.next {
+  background: #fff8e8;
+  border-color: #f2cb77;
+}
+
+.question-brief em {
+  color: var(--muted-strong);
+  display: block;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 720;
+  margin-top: 4px;
+}
+
+.panel-head.compact h3 {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.star-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.star-field {
+  display: grid;
+  gap: 7px;
+}
+
+.star-field span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 720;
+  text-transform: uppercase;
+}
+
+.star-field textarea {
+  line-height: 1.45;
+  min-height: 94px;
 }
 
 .answer-box {
@@ -1312,12 +1471,37 @@ textarea {
   font-size: 22px;
 }
 
+.answer-feedback-item.done {
+  background: #eff9f3;
+  border-color: #ccebd7;
+}
+
+.answer-feedback-item.next {
+  background: #fff8e8;
+  border-color: #f2cb77;
+}
+
+.answer-feedback-item.blocked {
+  background: #fff0ef;
+  border-color: #efc2bd;
+}
+
+.answer-feedback-item span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 760;
+  margin-top: 1px;
+  text-transform: uppercase;
+}
+
 @media (max-width: 1120px) {
   .topbar,
   .provider-console,
   .workspace,
   .editor-grid,
   .match-grid,
+  .coach-grid,
+  .star-grid,
   .contract-grid {
     grid-template-columns: 1fr;
   }
@@ -1366,6 +1550,10 @@ textarea {
   .provider-run-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .interview-actions {
+    justify-content: stretch;
   }
 
   .icon-button {
