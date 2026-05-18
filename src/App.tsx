@@ -27,6 +27,7 @@ import './App.css'
 type TabId = 'tailor' | 'coach' | 'interview' | 'pack'
 type StepId = 'import' | 'analyse' | 'rewrite' | 'coach' | 'interview' | 'pack'
 type StepStatus = 'done' | 'next' | 'blocked'
+type EvidenceReviewChoice = 'true' | 'needs-proof' | 'do-not-claim'
 
 type SavedDraft = {
   confidence: number
@@ -80,6 +81,41 @@ const modelOptions: Record<ProviderId, string[]> = {
   claude: ['claude-sonnet-4-20250514', 'claude-opus-4-1-20250805', 'claude-3-7-sonnet-20250219'],
   gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
 }
+
+const customModelOption = '__rolefit-custom-model__'
+
+const evidenceReviewOptions = [
+  {
+    id: 'true',
+    label: 'True',
+    status: 'done',
+    detail: 'Safe to use as a claim.',
+  },
+  {
+    id: 'needs-proof',
+    label: 'Needs proof',
+    status: 'next',
+    detail: 'Keep it as a gap until proof is added.',
+  },
+  {
+    id: 'do-not-claim',
+    label: 'Do not claim',
+    status: 'blocked',
+    detail: 'Leave it out of the CV for this application.',
+  },
+] satisfies Array<{ id: EvidenceReviewChoice; label: string; status: StepStatus; detail: string }>
+
+const evidenceReviewLabels = Object.fromEntries(
+  evidenceReviewOptions.map((option) => [option.id, option.label]),
+) as Record<EvidenceReviewChoice, string>
+
+const evidenceReviewDetails = Object.fromEntries(
+  evidenceReviewOptions.map((option) => [option.id, option.detail]),
+) as Record<EvidenceReviewChoice, string>
+
+const evidenceReviewStatuses = Object.fromEntries(
+  evidenceReviewOptions.map((option) => [option.id, option.status]),
+) as Record<EvidenceReviewChoice, StepStatus>
 
 const skillTerms = [
   'account management',
@@ -217,10 +253,7 @@ function loadSavedDraft(): Partial<SavedDraft> {
 
     const parsed = JSON.parse(saved) as Partial<SavedDraft>
     const provider = isProviderId(parsed.provider) ? parsed.provider : undefined
-    const model =
-      provider && typeof parsed.model === 'string' && modelOptions[provider].includes(parsed.model)
-        ? parsed.model
-        : undefined
+    const model = typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : undefined
 
     return {
       confidence: typeof parsed.confidence === 'number' ? Math.min(100, Math.max(0, parsed.confidence)) : undefined,
@@ -321,7 +354,17 @@ function scoreAnswer(answer: string, analysis: Analysis, confidence: number) {
   return Math.min(100, lengthScore + evidenceScore + confidenceScore)
 }
 
-function applicationPackText(analysis: Analysis, practiceAnswer: string, confidence: number) {
+function applicationPackText(
+  analysis: Analysis,
+  practiceAnswer: string,
+  confidence: number,
+  evidenceChoices: Record<string, EvidenceReviewChoice>,
+) {
+  const reviewLines = analysis.requirementMap.map((item) => {
+    const choice = evidenceChoices[item.term] ?? 'needs-proof'
+    return `- ${item.term}: ${evidenceReviewLabels[choice]}`
+  })
+
   return [
     `Rolefit CV application pack: ${analysis.title}`,
     '',
@@ -333,6 +376,9 @@ function applicationPackText(analysis: Analysis, practiceAnswer: string, confide
     analysis.rewrite.summary,
     ...analysis.rewrite.bullets.map((bullet) => `- ${bullet}`),
     analysis.rewrite.note,
+    '',
+    'Requirement review',
+    ...reviewLines,
     '',
     'Interview anchor',
     practiceAnswer.trim(),
@@ -382,10 +428,9 @@ function LockedPanel({ title, message, action }: { title: string; message: strin
 
 function App() {
   const [savedDraft] = useState(() => loadSavedDraft())
-  const [provider, setProvider] = useState<ProviderId>(savedDraft.provider ?? 'mock')
-  const [model, setModel] = useState(
-    savedDraft.model ?? modelOptions[savedDraft.provider ?? 'mock'][0],
-  )
+  const initialProvider = savedDraft.provider ?? 'mock'
+  const [provider, setProvider] = useState<ProviderId>(initialProvider)
+  const [model, setModel] = useState(savedDraft.model ?? modelOptions[initialProvider][0])
   const [apiKey, setApiKey] = useState('')
   const [cvText, setCvText] = useState(savedDraft.cvText ?? seedCv)
   const [jobText, setJobText] = useState(savedDraft.jobText ?? seedJob)
@@ -402,19 +447,26 @@ function App() {
   const [analysisRunKey, setAnalysisRunKey] = useState('')
   const [analysisError, setAnalysisError] = useState('')
   const [isAnalysing, setIsAnalysing] = useState(false)
+  const [evidenceChoices, setEvidenceChoices] = useState<Record<string, EvidenceReviewChoice>>({})
   const [evidenceReviewedKey, setEvidenceReviewedKey] = useState('')
   const [rewriteDoneKey, setRewriteDoneKey] = useState('')
   const [coachDoneKey, setCoachDoneKey] = useState('')
   const [interviewDoneKey, setInterviewDoneKey] = useState('')
   const [packDoneKey, setPackDoneKey] = useState('')
+  const knownModelSelected = modelOptions[provider].includes(model)
+  const usingCustomModel = !knownModelSelected
+  const modelSelectValue = knownModelSelected ? model : customModelOption
+  const selectedModel = usingCustomModel ? model.trim() : model
+  const modelReady = selectedModel.length > 0
+  const modelKind = usingCustomModel ? 'Custom model' : 'Known model'
 
   const inputKey = useMemo(
     () => `${cvText.trim()}\n---rolefit-job---\n${jobText.trim()}`,
     [cvText, jobText],
   )
   const analysisKey = useMemo(
-    () => `${inputKey}\n---rolefit-provider---\n${provider}\n---rolefit-model---\n${model}`,
-    [inputKey, model, provider],
+    () => `${inputKey}\n---rolefit-provider---\n${provider}\n---rolefit-model---\n${selectedModel}`,
+    [inputKey, provider, selectedModel],
   )
   const hasCv = cvText.trim().length >= 60
   const hasJob = jobText.trim().length >= 60
@@ -426,22 +478,66 @@ function App() {
     () => scoreAnswer(practiceAnswer, analysis, confidence),
     [analysis, confidence, practiceAnswer],
   )
+  const hasCurrentAnalysis = Boolean(currentAnalysisRun)
+  const requirementTotal = hasCurrentAnalysis ? analysis.requirementMap.length : 0
+  const reviewedRequirementCount = hasCurrentAnalysis
+    ? analysis.requirementMap.filter((item) => evidenceChoices[item.term]).length
+    : 0
+  const allRequirementsReviewed = requirementTotal === 0 || reviewedRequirementCount === requirementTotal
+  const evidenceReviewKey = useMemo(
+    () =>
+      [
+        analysisKey,
+        '---rolefit-evidence-review---',
+        ...analysis.requirementMap.map((item) => `${item.term}:${evidenceChoices[item.term] ?? 'unreviewed'}`),
+      ].join('\n'),
+    [analysis.requirementMap, analysisKey, evidenceChoices],
+  )
+  const evidenceReviewed =
+    hasCurrentAnalysis && allRequirementsReviewed && evidenceReviewedKey === evidenceReviewKey
+  const rewriteDone = evidenceReviewed && rewriteDoneKey === evidenceReviewKey
+  const coachDone = rewriteDone && coachDoneKey === evidenceReviewKey
   const practiceKey = useMemo(
-    () => `${analysisKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
-    [analysisKey, confidence, practiceAnswer],
+    () => `${evidenceReviewKey}\n---rolefit-answer---\n${practiceAnswer.trim()}\n---confidence---\n${confidence}`,
+    [confidence, evidenceReviewKey, practiceAnswer],
   )
   const packText = useMemo(
-    () => applicationPackText(analysis, practiceAnswer, confidence),
-    [analysis, confidence, practiceAnswer],
+    () => applicationPackText(analysis, practiceAnswer, confidence, evidenceChoices),
+    [analysis, confidence, evidenceChoices, practiceAnswer],
   )
-  const selectedProvider = providers.find((item) => item.id === provider) ?? providers[0]
-  const hasCurrentAnalysis = Boolean(currentAnalysisRun)
-  const evidenceReviewed = hasCurrentAnalysis && evidenceReviewedKey === analysisKey
-  const rewriteDone = evidenceReviewed && rewriteDoneKey === analysisKey
-  const coachDone = rewriteDone && coachDoneKey === analysisKey
   const answerReady = practiceAnswer.trim().length >= 80 && answerScore >= 45
   const interviewDone = coachDone && interviewDoneKey === practiceKey
   const packDone = interviewDone && packDoneKey === practiceKey
+  const providerStatus =
+    analysisError && apiKey.trim()
+      ? {
+          detail: 'The last live request failed. The key stays in this browser session only.',
+          label: 'Live request failed',
+          status: 'blocked' as StepStatus,
+        }
+      : !modelReady
+        ? {
+            detail: 'Type a model ID before running analysis.',
+            label: 'Model required',
+            status: 'blocked' as StepStatus,
+          }
+        : provider === 'mock'
+          ? {
+              detail: 'Local analysis only. No provider request will be sent.',
+              label: 'Local mock',
+              status: 'done' as StepStatus,
+            }
+          : apiKey.trim()
+            ? {
+                detail: 'Stored in memory for this tab, not saved in the draft.',
+                label: 'Session key present',
+                status: 'done' as StepStatus,
+              }
+            : {
+                detail: 'Runs the provider contract view until a session key is entered.',
+                label: 'Needs key',
+                status: 'next' as StepStatus,
+              }
   const visibleTab: TabId =
     activeTab === 'pack' && !interviewDone
       ? coachDone
@@ -472,7 +568,9 @@ function App() {
           detail = evidenceReviewed
             ? 'Evidence map is confirmed.'
             : hasCurrentAnalysis
-              ? 'Review and confirm the evidence map.'
+              ? allRequirementsReviewed
+                ? 'Confirm the reviewed evidence map.'
+                : `Review ${reviewedRequirementCount} of ${requirementTotal} requirements.`
               : importReady
                 ? 'Run analysis to map proof against the role.'
                 : 'Add both documents first.'
@@ -514,7 +612,18 @@ function App() {
 
         return { ...step, status, detail }
       }),
-    [coachDone, evidenceReviewed, hasCurrentAnalysis, importReady, interviewDone, packDone, rewriteDone],
+    [
+      allRequirementsReviewed,
+      coachDone,
+      evidenceReviewed,
+      hasCurrentAnalysis,
+      importReady,
+      interviewDone,
+      packDone,
+      requirementTotal,
+      reviewedRequirementCount,
+      rewriteDone,
+    ],
   )
   const nextStep = guidedSteps.find((step) => step.status === 'next') ?? guidedSteps.at(-1)!
 
@@ -525,21 +634,36 @@ function App() {
       confidence,
       cvText,
       jobText,
-      model,
+      model: selectedModel,
       practiceAnswer,
       provider,
     }
     window.localStorage.setItem(draftStorageKey, JSON.stringify(draft))
-  }, [confidence, cvText, jobText, model, practiceAnswer, provider])
+  }, [confidence, cvText, jobText, practiceAnswer, provider, selectedModel])
 
   function handleProviderChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextProvider = event.target.value as ProviderId
     setProvider(nextProvider)
     setModel(modelOptions[nextProvider][0])
+    setAnalysisError('')
+  }
+
+  function handleModelChange(event: ChangeEvent<HTMLSelectElement>) {
+    const nextModel = event.target.value
+    setModel(nextModel === customModelOption ? '' : nextModel)
+    setAnalysisError('')
+  }
+
+  function setEvidenceChoice(term: string, choice: EvidenceReviewChoice) {
+    setEvidenceChoices((current) => ({
+      ...current,
+      [term]: choice,
+    }))
+    setEvidenceReviewedKey('')
   }
 
   async function runAnalysis() {
-    if (!importReady || isAnalysing) return
+    if (!importReady || !modelReady || isAnalysing) return
 
     setIsAnalysing(true)
     setAnalysisError('')
@@ -551,12 +675,14 @@ function App() {
         apiKey,
         cvText,
         jobText,
-        model,
+        model: selectedModel,
         provider,
       })
 
       setAnalysisRun(nextRun)
       setAnalysisRunKey(analysisKey)
+      setEvidenceChoices({})
+      setEvidenceReviewedKey('')
       setActiveTab('tailor')
       setLastRun(
         `Updated ${new Date().toLocaleTimeString([], {
@@ -623,13 +749,26 @@ function App() {
           </label>
           <label className="field">
             <span>Model</span>
-            <select value={model} onChange={(event) => setModel(event.target.value)}>
+            <select value={modelSelectValue} onChange={handleModelChange}>
               {modelOptions[provider].map((item) => (
                 <option key={item} value={item}>
                   {item}
                 </option>
               ))}
+              <option value={customModelOption}>Custom model</option>
             </select>
+            {usingCustomModel && (
+              <input
+                aria-label="Custom model ID"
+                onChange={(event) => {
+                  setModel(event.target.value)
+                  setAnalysisError('')
+                }}
+                placeholder="provider-model-id"
+                value={model}
+              />
+            )}
+            <em className={`model-kind ${usingCustomModel ? 'custom' : 'known'}`}>{modelKind}</em>
           </label>
           <label className="field key-field">
             <span>Your API key</span>
@@ -637,16 +776,22 @@ function App() {
               <KeyRound size={16} aria-hidden="true" />
               <input
                 autoComplete="off"
-                onChange={(event) => setApiKey(event.target.value)}
+                onChange={(event) => {
+                  setApiKey(event.target.value)
+                  setAnalysisError('')
+                }}
                 placeholder="Paste key for real calls later"
                 type="password"
                 value={apiKey}
               />
             </div>
           </label>
-          <div className="provider-status">
-            <Lock size={15} aria-hidden="true" />
-            <span>{apiKey ? 'Session key ready' : selectedProvider.note}</span>
+          <div className={`provider-status ${providerStatus.status}`}>
+            <span className={`status-light ${providerStatus.status}`} aria-hidden="true"></span>
+            <div>
+              <strong>{providerStatus.label}</strong>
+              <span>{providerStatus.detail}</span>
+            </div>
           </div>
         </div>
       </header>
@@ -706,7 +851,7 @@ function App() {
               <span className="section-kicker">Tailor to the role</span>
               <h2>Evidence in, targeted draft out</h2>
             </div>
-            <button className="icon-button action-button" disabled={!importReady || isAnalysing} onClick={runAnalysis} type="button">
+            <button className="icon-button action-button" disabled={!importReady || !modelReady || isAnalysing} onClick={runAnalysis} type="button">
               <RefreshCw size={17} aria-hidden="true" />
               <span>{isAnalysing ? 'Analysing' : 'Run analysis'}</span>
             </button>
@@ -831,28 +976,70 @@ function App() {
                   </div>
                   <button
                     className="icon-button action-button"
-                    disabled={evidenceReviewed}
+                    disabled={evidenceReviewed || !allRequirementsReviewed}
                     onClick={() => {
-                      setEvidenceReviewedKey(analysisKey)
+                      setEvidenceReviewedKey(evidenceReviewKey)
                       setActiveTab('tailor')
                     }}
                     type="button"
                   >
                     <Check size={17} aria-hidden="true" />
-                    <span>{evidenceReviewed ? 'Evidence map confirmed' : 'Confirm evidence map'}</span>
+                    <span>
+                      {evidenceReviewed
+                        ? 'Evidence map confirmed'
+                        : allRequirementsReviewed
+                          ? 'Confirm evidence map'
+                          : `Review ${requirementTotal - reviewedRequirementCount} more`}
+                    </span>
                   </button>
                 </div>
+                <div className={`review-progress ${evidenceReviewed ? 'done' : 'next'}`}>
+                  <span className={`status-light ${evidenceReviewed ? 'done' : 'next'}`} aria-hidden="true"></span>
+                  <div>
+                    <strong>
+                      {evidenceReviewed
+                        ? 'All requirements checked'
+                        : `${reviewedRequirementCount} of ${requirementTotal} requirements checked`}
+                    </strong>
+                    <span>Mark each requirement before the rewrite unlocks.</span>
+                  </div>
+                </div>
                 <div className="requirement-list">
-                  {analysis.requirementMap.map((item) => (
-                    <article className={`requirement-card ${item.status}`} key={item.term}>
-                      <span className={`status-light ${item.status === 'strong' ? 'done' : 'next'}`} aria-hidden="true"></span>
-                      <div>
-                        <strong>{item.term}</strong>
-                        {item.status === 'strong' ? <p>{item.evidence}</p> : <p>No direct proof found in this CV yet.</p>}
-                        <em>{item.nextAction}</em>
-                      </div>
-                    </article>
-                  ))}
+                  {analysis.requirementMap.map((item) => {
+                    const reviewChoice = evidenceChoices[item.term]
+                    return (
+                      <article className={`requirement-card ${item.status}`} key={item.term}>
+                        <span className={`status-light ${item.status === 'strong' ? 'done' : 'next'}`} aria-hidden="true"></span>
+                        <div>
+                          <strong>{item.term}</strong>
+                          {item.status === 'strong' ? <p>{item.evidence}</p> : <p>No direct proof found in this CV yet.</p>}
+                          <em>{item.nextAction}</em>
+                          <div className="review-controls" role="group" aria-label={`Review ${item.term}`}>
+                            {evidenceReviewOptions.map((option) => (
+                              <button
+                                className={[
+                                  'review-option',
+                                  option.status,
+                                  reviewChoice === option.id ? 'selected' : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' ')}
+                                key={option.id}
+                                onClick={() => setEvidenceChoice(item.term, option.id)}
+                                type="button"
+                              >
+                                <span className={`status-light ${option.status}`} aria-hidden="true"></span>
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                          {reviewChoice && (
+                            <span className="review-note">{evidenceReviewDetails[reviewChoice]}</span>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
                 </div>
               </div>
             </div>
@@ -934,7 +1121,7 @@ function App() {
               <button
                 className="icon-button action-button"
                 onClick={() => {
-                  setRewriteDoneKey(analysisKey)
+                  setRewriteDoneKey(evidenceReviewKey)
                   setActiveTab('coach')
                 }}
                 type="button"
@@ -976,7 +1163,7 @@ function App() {
               <button
                 className="icon-button action-button"
                 onClick={() => {
-                  setCoachDoneKey(analysisKey)
+                  setCoachDoneKey(evidenceReviewKey)
                   setActiveTab('interview')
                 }}
                 type="button"
@@ -1113,6 +1300,24 @@ function App() {
                 ) : (
                   <p>No obvious role-language gaps. Keep the claims specific and interview-safe.</p>
                 )}
+              </section>
+
+              <section className="pack-card">
+                <span className="section-kicker">Evidence review</span>
+                <div className="pack-list">
+                  {analysis.requirementMap.slice(0, 6).map((item) => {
+                    const choice = evidenceChoices[item.term] ?? 'needs-proof'
+                    return (
+                      <div className="pack-list-item" key={item.term}>
+                        <span className={`status-light ${evidenceReviewStatuses[choice]}`} aria-hidden="true"></span>
+                        <p>
+                          <strong>{item.term}</strong>
+                          {evidenceReviewLabels[choice]}
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
               </section>
 
               <section className="pack-card story-card">
