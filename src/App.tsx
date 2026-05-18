@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type DragEvent } from 'react'
 import {
   ArrowRight,
   Brain,
@@ -28,6 +28,11 @@ type TabId = 'tailor' | 'coach' | 'interview' | 'pack'
 type StepId = 'import' | 'analyse' | 'rewrite' | 'coach' | 'interview' | 'pack'
 type StepStatus = 'done' | 'next' | 'blocked'
 type EvidenceReviewChoice = 'true' | 'needs-proof' | 'do-not-claim'
+type ImportTarget = 'cv' | 'job'
+type ImportStatus = {
+  message: string
+  state: 'idle' | 'done' | 'error'
+}
 
 type SavedDraft = {
   confidence: number
@@ -74,6 +79,19 @@ const providers: Array<{ id: ProviderId; label: string; note: string }> = [
 ]
 
 const draftStorageKey = 'rolefit-cv-draft-v1'
+const maxImportBytes = 64 * 1024
+const importAccept = '.txt,.md,.markdown'
+const importExtensions = new Set(['.txt', '.md', '.markdown'])
+
+const importTargetLabels: Record<ImportTarget, string> = {
+  cv: 'CV',
+  job: 'job advert',
+}
+
+const emptyImportStatus: ImportStatus = {
+  message: '',
+  state: 'idle',
+}
 
 const modelOptions: Record<ProviderId, string[]> = {
   mock: ['Rolefit demo model', 'Fast local draft'],
@@ -242,6 +260,34 @@ function roleTitle(job: string) {
 
 function isProviderId(value: unknown): value is ProviderId {
   return providers.some((provider) => provider.id === value)
+}
+
+function importExtension(filename: string) {
+  const trimmed = filename.trim().toLowerCase()
+  const dotIndex = trimmed.lastIndexOf('.')
+  return dotIndex >= 0 ? trimmed.slice(dotIndex) : ''
+}
+
+function isSupportedImportFile(file: File) {
+  return importExtensions.has(importExtension(file.name))
+}
+
+function readImportedText(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onerror = () => reject(new Error('This file could not be read.'))
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+        return
+      }
+
+      reject(new Error('This file did not contain readable text.'))
+    }
+
+    reader.readAsText(file)
+  })
 }
 
 function loadSavedDraft(): Partial<SavedDraft> {
@@ -426,6 +472,60 @@ function LockedPanel({ title, message, action }: { title: string; message: strin
   )
 }
 
+function ImportDropZone({
+  buttonLabel,
+  onFile,
+  status,
+  target,
+}: {
+  buttonLabel: string
+  onFile: (target: ImportTarget, file: File) => void
+  status: ImportStatus
+  target: ImportTarget
+}) {
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const file = event.dataTransfer.files.item(0)
+    if (file) onFile(target, file)
+  }
+
+  function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.item(0)
+    if (file) onFile(target, file)
+    event.currentTarget.value = ''
+  }
+
+  return (
+    <div className="import-dropzone" onDragOver={handleDragOver} onDrop={handleDrop}>
+      <div className="import-actions">
+        <label className="icon-button import-button">
+          <FileText size={16} aria-hidden="true" />
+          <span>{buttonLabel}</span>
+          <input
+            accept={importAccept}
+            aria-label={buttonLabel}
+            className="file-input"
+            data-testid={`${target}-import-input`}
+            onChange={handleInputChange}
+            type="file"
+          />
+        </label>
+        <span>Drop .txt or .md</span>
+      </div>
+      {status.state !== 'idle' && (
+        <div className={`import-status ${status.state}`} role={status.state === 'error' ? 'alert' : 'status'}>
+          <span className={`status-light ${status.state === 'done' ? 'done' : 'blocked'}`} aria-hidden="true"></span>
+          <span>{status.message}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function App() {
   const [savedDraft] = useState(() => loadSavedDraft())
   const initialProvider = savedDraft.provider ?? 'mock'
@@ -447,6 +547,10 @@ function App() {
   const [analysisRunKey, setAnalysisRunKey] = useState('')
   const [analysisError, setAnalysisError] = useState('')
   const [isAnalysing, setIsAnalysing] = useState(false)
+  const [importStatuses, setImportStatuses] = useState<Record<ImportTarget, ImportStatus>>({
+    cv: emptyImportStatus,
+    job: emptyImportStatus,
+  })
   const [evidenceChoices, setEvidenceChoices] = useState<Record<string, EvidenceReviewChoice>>({})
   const [evidenceReviewedKey, setEvidenceReviewedKey] = useState('')
   const [rewriteDoneKey, setRewriteDoneKey] = useState('')
@@ -662,6 +766,83 @@ function App() {
     setEvidenceReviewedKey('')
   }
 
+  async function handleImportFile(target: ImportTarget, file: File) {
+    const targetLabel = importTargetLabels[target]
+
+    if (!isSupportedImportFile(file)) {
+      setImportStatuses((current) => ({
+        ...current,
+        [target]: {
+          message: `${file.name} is not supported. Use .txt, .md, or .markdown.`,
+          state: 'error',
+        },
+      }))
+      return
+    }
+
+    if (file.size === 0) {
+      setImportStatuses((current) => ({
+        ...current,
+        [target]: {
+          message: `${file.name} is empty.`,
+          state: 'error',
+        },
+      }))
+      return
+    }
+
+    if (file.size > maxImportBytes) {
+      setImportStatuses((current) => ({
+        ...current,
+        [target]: {
+          message: `${file.name} is larger than 64 KB.`,
+          state: 'error',
+        },
+      }))
+      return
+    }
+
+    try {
+      const importedText = await readImportedText(file)
+      const cleanedText = importedText.trim()
+
+      if (!cleanedText) {
+        setImportStatuses((current) => ({
+          ...current,
+          [target]: {
+            message: `${file.name} is empty.`,
+            state: 'error',
+          },
+        }))
+        return
+      }
+
+      if (target === 'cv') {
+        setCvText(cleanedText)
+      } else {
+        setJobText(cleanedText)
+      }
+
+      setAnalysisError('')
+      setActiveTab('tailor')
+      setImportStatuses((current) => ({
+        ...current,
+        [target]: {
+          message: `Loaded ${file.name} into ${targetLabel}.`,
+          state: 'done',
+        },
+      }))
+    } catch (error) {
+      setImportStatuses((current) => ({
+        ...current,
+        [target]: {
+          message: error instanceof Error ? error.message : `${file.name} could not be read.`,
+          state: 'error',
+        },
+      }))
+    }
+  }
+
   async function runAnalysis() {
     if (!importReady || !modelReady || isAnalysing) return
 
@@ -865,20 +1046,32 @@ function App() {
           )}
 
           <div className="editor-grid">
-            <label className="editor-panel">
+            <div className="editor-panel">
               <span className="editor-title">
                 <FileText size={17} aria-hidden="true" />
                 CV
               </span>
-              <textarea value={cvText} onChange={(event) => setCvText(event.target.value)} />
-            </label>
-            <label className="editor-panel">
+              <ImportDropZone
+                buttonLabel="Import CV"
+                onFile={handleImportFile}
+                status={importStatuses.cv}
+                target="cv"
+              />
+              <textarea aria-label="CV" value={cvText} onChange={(event) => setCvText(event.target.value)} />
+            </div>
+            <div className="editor-panel">
               <span className="editor-title">
                 <BriefcaseBusiness size={17} aria-hidden="true" />
                 Job advert
               </span>
-              <textarea value={jobText} onChange={(event) => setJobText(event.target.value)} />
-            </label>
+              <ImportDropZone
+                buttonLabel="Import job"
+                onFile={handleImportFile}
+                status={importStatuses.job}
+                target="job"
+              />
+              <textarea aria-label="Job advert" value={jobText} onChange={(event) => setJobText(event.target.value)} />
+            </div>
           </div>
 
           {hasCurrentAnalysis ? (

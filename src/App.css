@@ -466,13 +466,85 @@ textarea:focus {
   border-radius: 8px;
   display: grid;
   gap: 10px;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   min-width: 0;
   padding: 12px;
 }
 
 .editor-title {
   gap: 7px;
+}
+
+.import-dropzone {
+  background: #ffffff;
+  border: 1px dashed #cadbd5;
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.import-dropzone:hover,
+.import-dropzone:focus-within {
+  background: #f7fbf9;
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(21, 148, 97, 0.1);
+}
+
+.import-actions,
+.import-status {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+}
+
+.import-actions {
+  justify-content: space-between;
+}
+
+.import-actions > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.import-button {
+  min-height: 34px;
+  overflow: hidden;
+  position: relative;
+}
+
+.file-input {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+
+.import-status {
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.35;
+  padding: 8px 9px;
+}
+
+.import-status.done {
+  background: #edf8f4;
+  border: 1px solid #ccebd7;
+  color: #12614f;
+}
+
+.import-status.error {
+  background: #fff0ef;
+  border: 1px solid #efc2bd;
+  color: #96362f;
 }
 
 textarea {
