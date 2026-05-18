@@ -22,6 +22,14 @@ import {
   type ProviderId,
   type ProviderRunResult,
 } from './ai/rolefitProvider'
+import {
+  extractImportedDocumentText,
+  importAccept,
+  importSizeLimitFor,
+  importSizeLimitMessage,
+  isSupportedImportFile,
+  supportedImportMessage,
+} from './importers/documentText'
 import './App.css'
 
 type TabId = 'tailor' | 'coach' | 'interview' | 'pack'
@@ -31,7 +39,7 @@ type EvidenceReviewChoice = 'true' | 'needs-proof' | 'do-not-claim'
 type ImportTarget = 'cv' | 'job'
 type ImportStatus = {
   message: string
-  state: 'idle' | 'done' | 'error'
+  state: 'idle' | 'done' | 'warning' | 'error'
 }
 type RewriteDraft = {
   bullets: string[]
@@ -132,9 +140,6 @@ const providers: Array<{ id: ProviderId; label: string; note: string }> = [
 ]
 
 const draftStorageKey = 'rolefit-cv-draft-v1'
-const maxImportBytes = 64 * 1024
-const importAccept = '.txt,.md,.markdown'
-const importExtensions = new Set(['.txt', '.md', '.markdown'])
 
 const importTargetLabels: Record<ImportTarget, string> = {
   cv: 'CV',
@@ -328,16 +333,6 @@ function isProviderId(value: unknown): value is ProviderId {
   return providers.some((provider) => provider.id === value)
 }
 
-function importExtension(filename: string) {
-  const trimmed = filename.trim().toLowerCase()
-  const dotIndex = trimmed.lastIndexOf('.')
-  return dotIndex >= 0 ? trimmed.slice(dotIndex) : ''
-}
-
-function isSupportedImportFile(file: File) {
-  return importExtensions.has(importExtension(file.name))
-}
-
 function evidenceReviewKeyFor(
   analysisKey: string,
   requirementMap: RequirementEvidence[],
@@ -348,24 +343,6 @@ function evidenceReviewKeyFor(
     '---rolefit-evidence-review---',
     ...requirementMap.map((item) => `${item.term}:${evidenceChoices[item.term] ?? 'unreviewed'}`),
   ].join('\n')
-}
-
-function readImportedText(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-
-    reader.onerror = () => reject(new Error('This file could not be read.'))
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-        return
-      }
-
-      reject(new Error('This file did not contain readable text.'))
-    }
-
-    reader.readAsText(file)
-  })
 }
 
 function readSavedStarDraft(value: unknown): StarDraft | undefined {
@@ -1155,6 +1132,9 @@ function ImportDropZone({
     event.currentTarget.value = ''
   }
 
+  const statusLight =
+    status.state === 'done' ? 'done' : status.state === 'warning' ? 'next' : 'blocked'
+
   return (
     <div className="import-dropzone" onDragOver={handleDragOver} onDrop={handleDrop}>
       <div className="import-actions">
@@ -1170,11 +1150,11 @@ function ImportDropZone({
             type="file"
           />
         </label>
-        <span>Drop .txt or .md</span>
+        <span>Drop .txt, .md, .docx, or .pdf</span>
       </div>
       {status.state !== 'idle' && (
         <div className={`import-status ${status.state}`} role={status.state === 'error' ? 'alert' : 'status'}>
-          <span className={`status-light ${status.state === 'done' ? 'done' : 'blocked'}`} aria-hidden="true"></span>
+          <span className={`status-light ${statusLight}`} aria-hidden="true"></span>
           <span>{status.message}</span>
         </div>
       )}
@@ -1622,6 +1602,40 @@ function App() {
     setActiveTab('tailor')
   }
 
+  function resetWorkflowAfterInputChange() {
+    setAnalysisRunKey('')
+    setEvidenceChoices({})
+    setEvidenceReviewedKey('')
+    setEditedRewrite(null)
+    setEditedRewriteKey('')
+    setRewriteDoneKey('')
+    setCoachDoneKey('')
+    setInterviewDoneKey('')
+    setPackDoneKey('')
+    setSelectedQuestion(0)
+    setInterviewStar(emptyStarDraft)
+    setAnalysisError('')
+    setLastRun('Input changed')
+  }
+
+  function updateCvInput(text: string) {
+    setCvText(text)
+    setImportStatuses((current) => ({
+      ...current,
+      cv: emptyImportStatus,
+    }))
+    resetWorkflowAfterInputChange()
+  }
+
+  function updateJobInput(text: string) {
+    setJobText(text)
+    setImportStatuses((current) => ({
+      ...current,
+      job: emptyImportStatus,
+    }))
+    resetWorkflowAfterInputChange()
+  }
+
   async function handleImportFile(target: ImportTarget, file: File) {
     const targetLabel = importTargetLabels[target]
 
@@ -1629,7 +1643,7 @@ function App() {
       setImportStatuses((current) => ({
         ...current,
         [target]: {
-          message: `${file.name} is not supported. Use .txt, .md, or .markdown.`,
+          message: `${file.name} is not supported. Use ${supportedImportMessage()}.`,
           state: 'error',
         },
       }))
@@ -1647,11 +1661,11 @@ function App() {
       return
     }
 
-    if (file.size > maxImportBytes) {
+    if (file.size > importSizeLimitFor(file)) {
       setImportStatuses((current) => ({
         ...current,
         [target]: {
-          message: `${file.name} is larger than 64 KB.`,
+          message: `${file.name} is larger than ${importSizeLimitMessage(file)}.`,
           state: 'error',
         },
       }))
@@ -1659,8 +1673,8 @@ function App() {
     }
 
     try {
-      const importedText = await readImportedText(file)
-      const cleanedText = importedText.trim()
+      const imported = await extractImportedDocumentText(file)
+      const cleanedText = imported.text.trim()
 
       if (!cleanedText) {
         setImportStatuses((current) => ({
@@ -1679,13 +1693,13 @@ function App() {
         setJobText(cleanedText)
       }
 
-      setAnalysisError('')
+      resetWorkflowAfterInputChange()
       setActiveTab('tailor')
       setImportStatuses((current) => ({
         ...current,
         [target]: {
-          message: `Loaded ${file.name} into ${targetLabel}.`,
-          state: 'done',
+          message: `${imported.message} Review it in the ${targetLabel} box before running analysis.`,
+          state: imported.state,
         },
       }))
     } catch (error) {
@@ -1942,7 +1956,7 @@ function App() {
                 status={importStatuses.cv}
                 target="cv"
               />
-              <textarea aria-label="CV" value={cvText} onChange={(event) => setCvText(event.target.value)} />
+              <textarea aria-label="CV" value={cvText} onChange={(event) => updateCvInput(event.target.value)} />
             </div>
             <div className="editor-panel">
               <span className="editor-title">
@@ -1955,7 +1969,7 @@ function App() {
                 status={importStatuses.job}
                 target="job"
               />
-              <textarea aria-label="Job advert" value={jobText} onChange={(event) => setJobText(event.target.value)} />
+              <textarea aria-label="Job advert" value={jobText} onChange={(event) => updateJobInput(event.target.value)} />
             </div>
           </div>
 

@@ -25,7 +25,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 
 - Local one-click Windows launcher.
 - CV and job advert text editors.
-- `.txt`, `.md`, and `.markdown` import for CV and job inputs.
+- `.txt`, `.md`, `.markdown`, `.docx`, and readable `.pdf` import for CV and job inputs.
 - Local mock analysis that works without an API key.
 - Provider selector for OpenAI, Claude, and Gemini.
 - Session-only bring-your-own-key field.
@@ -59,6 +59,7 @@ If a live provider request fails, Rolefit falls back to local analysis so the wo
 
 - Imported files are read client-side.
 - Imported text is not uploaded just by importing it.
+- DOCX/PDF imports extract plain text into the editor; the user still chooses when to run analysis.
 - API keys are not saved in local draft storage.
 - Local draft storage can save CV text, job text, provider/model choice, and practice notes so the user does not lose work.
 - Live provider analysis sends the CV and job advert to the selected AI provider when the user runs analysis with a session key present.
@@ -107,7 +108,7 @@ npm run build
 
 ## Current Limitations
 
-- PDF and DOCX import are not implemented yet.
+- Scanned or image-only PDFs are not OCR processed yet.
 - Live provider support is still early and should be hardened before wider use.
 - The app is local-first; hosted deployment and account systems are not part of this stage.
 - The analysis is a production foundation, not a final career-advice guarantee.
@@ -116,7 +117,7 @@ npm run build
 
 Planned next slices:
 
-- PDF and DOCX import.
+- OCR support for scanned PDFs.
 - Stronger provider error handling and request limits.
 - Better live-provider prompt evaluation.
 - More interview modes, including follow-up questions.

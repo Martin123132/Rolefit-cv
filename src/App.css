@@ -549,6 +549,12 @@ textarea:focus {
   color: #12614f;
 }
 
+.import-status.warning {
+  background: #fff8e8;
+  border: 1px solid #f2cb77;
+  color: #75541a;
+}
+
 .import-status.error {
   background: #fff0ef;
   border: 1px solid #efc2bd;
