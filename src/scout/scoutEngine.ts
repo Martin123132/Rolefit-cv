@@ -24,12 +24,29 @@ export type ScoutProfile = {
 }
 
 export type ScoutMatchStatus = 'green' | 'amber' | 'red' | 'black'
+export type ScoutSignalStatus = ScoutMatchStatus
+
+export type ScoutRequirementCategory = 'mandatory' | 'preferred' | 'responsibility'
 
 export type ScoutRequirement = {
+  category: ScoutRequirementCategory
   detail: string
   evidence: string
   status: 'green' | 'amber' | 'red'
   term: string
+}
+
+export type ScoutCheck = {
+  detail: string
+  label: string
+  status: ScoutSignalStatus
+}
+
+export type ScoutSignalGroup = {
+  id: 'mandatory' | 'preferred' | 'responsibilities' | 'pay' | 'work-pattern' | 'warnings'
+  items: ScoutCheck[]
+  label: string
+  status: ScoutSignalStatus
 }
 
 export type ScoutMatch = {
@@ -39,6 +56,8 @@ export type ScoutMatch = {
   missingTerms: string[]
   requirementMap: ScoutRequirement[]
   score: number
+  scoreBreakdown: ScoutCheck[]
+  signalGroups: ScoutSignalGroup[]
   status: ScoutMatchStatus
   statusLabel: string
   summary: string
@@ -136,6 +155,11 @@ const cautionPatterns = [
     severity: 'warning',
   },
   {
+    label: 'Own transport warning',
+    regex: /\b(own transport|own vehicle|must drive|car required)\b/i,
+    severity: 'warning',
+  },
+  {
     label: 'Zero hours',
     regex: /\bzero[-\s]?hours?\b/i,
     severity: 'hard',
@@ -169,6 +193,12 @@ const cautionPatterns = [
 
 const mandatoryPattern =
   /\b(must have|required|essential|minimum|valid|licence|license|qualification|certificate|certification|need|needs)\b/i
+const preferredPattern = /\b(preferred|desirable|nice to have|bonus|advantage|beneficial|ideally|would help)\b/i
+const responsibilityPattern =
+  /\b(you will|responsible for|day to day|duties|role involves|role includes|will include|tasks include|main duties|handle|manage|support|prepare|maintain|deliver|build|create|work with|report|document)\b/i
+const salaryContextPattern =
+  /\b(pay|salary|rate|wage|wages|hourly|annual|annum|per annum|per year|per hour|hr|ph|gbp|earn|earning|package)\b|(?:\u00a3)/i
+const workPatternUnknownPattern = /\b(flexible|shift|shifts|rota|weekend|evening|night)\b/i
 
 function normalise(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -210,6 +240,13 @@ function extractKnownTerms(text: string) {
     ...roleTerms.filter((term) => termMatches(text, term)),
     ...credentialTerms.filter((term) => termMatches(text, term)),
   ])
+}
+
+function splitSentences(text: string) {
+  return text
+    .split(/\n|(?<=[.!?])\s+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
 }
 
 function titleForJob(text: string) {
@@ -261,10 +298,7 @@ function matchingPhrases(text: string, phrases: readonly string[]) {
 }
 
 function sentenceForTerm(text: string, term: string) {
-  const sentences = text
-    .split(/\n|(?<=[.!?])\s+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
+  const sentences = splitSentences(text)
   const candidates = termCandidates(term).slice().sort((left, right) => normalise(right).length - normalise(left).length)
 
   for (const candidate of candidates) {
@@ -275,11 +309,33 @@ function sentenceForTerm(text: string, term: string) {
   return ''
 }
 
-function termAppearsNearMandatory(jobText: string, term: string) {
-  return jobText
-    .split(/\n|(?<=[.!?])\s+/)
-    .map((line) => line.trim())
-    .some((line) => mandatoryPattern.test(line) && termMatches(line, term))
+type JobSignals = {
+  allTerms: string[]
+  mandatoryTerms: string[]
+  preferredTerms: string[]
+  responsibilityTerms: string[]
+}
+
+function termsFromSentences(sentences: readonly string[], pattern: RegExp) {
+  return unique(sentences.filter((line) => pattern.test(line)).flatMap((line) => extractKnownTerms(line)))
+}
+
+function extractJobSignals(jobText: string): JobSignals {
+  const sentences = splitSentences(jobText)
+  const allTerms = extractKnownTerms(jobText)
+  const mandatoryTerms = termsFromSentences(sentences, mandatoryPattern)
+  const preferredTerms = termsFromSentences(sentences, preferredPattern).filter((term) => !mandatoryTerms.includes(term))
+  const responsibilityTerms = unique([
+    ...termsFromSentences(sentences, responsibilityPattern),
+    ...allTerms.filter((term) => !mandatoryTerms.includes(term) && !preferredTerms.includes(term)),
+  ]).filter((term) => !mandatoryTerms.includes(term) && !preferredTerms.includes(term))
+
+  return {
+    allTerms,
+    mandatoryTerms,
+    preferredTerms,
+    responsibilityTerms,
+  }
 }
 
 type SalaryValue = {
@@ -287,8 +343,18 @@ type SalaryValue = {
   value: number
 }
 
-function parseSalary(text: string): SalaryValue | null {
-  const hourly = [...text.matchAll(/(?:\u00a3|\bgbp\s*)?\s*(\d{1,3}(?:\.\d{1,2})?)\s*(?:per\s*)?(?:hour|hr|ph)\b/gi)]
+function salaryFragments(text: string, allowLooseNumbers: boolean) {
+  if (allowLooseNumbers) return [text]
+
+  return splitSentences(text).filter((line) => salaryContextPattern.test(line))
+}
+
+function parseSalary(text: string, allowLooseNumbers = false): SalaryValue | null {
+  const fragments = salaryFragments(text, allowLooseNumbers)
+  const scopedText = fragments.join('\n')
+  const hourly = [
+    ...scopedText.matchAll(/(?:\u00a3|\bgbp\s*)?\s*(\d{1,3}(?:\.\d{1,2})?)\s*(?:per\s*)?(?:hour|hr|ph)\b/gi),
+  ]
     .map((match) => Number(match[1]))
     .filter((value) => value >= 1)
 
@@ -297,11 +363,11 @@ function parseSalary(text: string): SalaryValue | null {
   }
 
   const annualValues = [
-    ...[...text.matchAll(/(?:\u00a3|\bgbp\s*)\s*(\d{2,3}(?:,\d{3})+|\d{5,6})\b/gi)].map((match) =>
+    ...[...scopedText.matchAll(/(?:\u00a3|\bgbp\s*)\s*(\d{2,3}(?:,\d{3})+|\d{5,6})\b/gi)].map((match) =>
       Number(match[1].replace(/,/g, '')),
     ),
-    ...[...text.matchAll(/\b(\d{2,3})\s?k\b/gi)].map((match) => Number(match[1]) * 1000),
-    ...[...text.matchAll(/\b(\d{5,6})\b/g)].map((match) => Number(match[1])),
+    ...[...scopedText.matchAll(/\b(\d{2,3})\s?k\b/gi)].map((match) => Number(match[1]) * 1000),
+    ...[...scopedText.matchAll(/\b(\d{5,6})\b/g)].map((match) => Number(match[1])),
   ].filter((value) => value >= 1000)
 
   if (annualValues.length > 0) {
@@ -317,24 +383,208 @@ function salaryLabel(salary: SalaryValue) {
     : `GBP ${Math.round(salary.value).toLocaleString()}/year`
 }
 
-function workPreferenceWarning(profile: ScoutProfile, jobText: string) {
+function payCheckFor(profile: ScoutProfile, jobText: string): ScoutCheck {
+  const salaryFloor = parseSalary(profile.salaryFloor, true)
+  const jobSalary = parseSalary(jobText)
+
+  if (salaryFloor && jobSalary && salaryFloor.period === jobSalary.period && jobSalary.value < salaryFloor.value) {
+    return {
+      detail: `${salaryLabel(jobSalary)} shown, below ${salaryLabel(salaryFloor)} wanted.`,
+      label: 'Pay below floor',
+      status: 'black',
+    }
+  }
+
+  if (salaryFloor && jobSalary && salaryFloor.period === jobSalary.period) {
+    return {
+      detail: `${salaryLabel(jobSalary)} appears to meet the user's floor.`,
+      label: 'Pay meets floor',
+      status: 'green',
+    }
+  }
+
+  if (salaryFloor && jobSalary && salaryFloor.period !== jobSalary.period) {
+    return {
+      detail: `${salaryLabel(jobSalary)} found, but it cannot be compared cleanly with ${salaryLabel(salaryFloor)}.`,
+      label: 'Pay needs checking',
+      status: 'amber',
+    }
+  }
+
+  if (salaryFloor && !jobSalary) {
+    return {
+      detail: `The advert does not show a clear pay figure against ${salaryLabel(salaryFloor)}.`,
+      label: 'Pay not clear',
+      status: 'amber',
+    }
+  }
+
+  if (/\bcompetitive salary\b/i.test(jobText)) {
+    return {
+      detail: 'The advert says competitive salary but does not give a clear figure.',
+      label: 'Competitive salary',
+      status: 'amber',
+    }
+  }
+
+  if (jobSalary) {
+    return {
+      detail: `${salaryLabel(jobSalary)} is visible in the advert.`,
+      label: 'Pay visible',
+      status: 'green',
+    }
+  }
+
+  return {
+    detail: 'The advert does not show a clear pay figure.',
+    label: 'Pay not shown',
+    status: 'amber',
+  }
+}
+
+function workPatternCheckFor(profile: ScoutProfile, jobText: string): ScoutCheck {
   const jobMentionsRemote = /\b(remote|work from home|wfh)\b/i.test(jobText)
   const jobMentionsHybrid = /\bhybrid\b/i.test(jobText)
   const jobMentionsOnSite = /\b(on[-\s]?site|onsite|site based|office based|warehouse|factory|retail store)\b/i.test(jobText)
 
+  if (profile.workPreference === 'any') {
+    return {
+      detail: jobMentionsRemote || jobMentionsHybrid || jobMentionsOnSite ? 'The advert gives some work-pattern signal.' : 'No work-pattern preference set.',
+      label: 'Work pattern flexible',
+      status: 'green',
+    }
+  }
+
   if (profile.workPreference === 'remote' && jobMentionsOnSite && !jobMentionsRemote) {
-    return 'Work pattern may not match remote preference'
+    return {
+      detail: 'The advert looks site-based, but the user prefers remote work.',
+      label: 'Remote mismatch',
+      status: 'red',
+    }
   }
 
   if (profile.workPreference === 'on-site' && jobMentionsRemote && !jobMentionsOnSite) {
-    return 'Work pattern may not match on-site preference'
+    return {
+      detail: 'The advert looks remote, but the user prefers on-site work.',
+      label: 'On-site mismatch',
+      status: 'red',
+    }
   }
 
-  if (profile.workPreference === 'hybrid' && !jobMentionsHybrid && (jobMentionsRemote || jobMentionsOnSite)) {
-    return 'Hybrid preference is not clearly offered'
+  if (profile.workPreference === 'hybrid' && jobMentionsHybrid) {
+    return {
+      detail: 'Hybrid work is named in the advert.',
+      label: 'Hybrid match',
+      status: 'green',
+    }
   }
 
-  return ''
+  if (profile.workPreference === 'remote' && jobMentionsRemote) {
+    return {
+      detail: 'Remote work is named in the advert.',
+      label: 'Remote match',
+      status: 'green',
+    }
+  }
+
+  if (profile.workPreference === 'on-site' && jobMentionsOnSite) {
+    return {
+      detail: 'On-site work is named in the advert.',
+      label: 'On-site match',
+      status: 'green',
+    }
+  }
+
+  if (workPatternUnknownPattern.test(jobText)) {
+    return {
+      detail: 'The advert mentions shifts or flexibility, so hours should be checked.',
+      label: 'Pattern needs checking',
+      status: 'amber',
+    }
+  }
+
+  return {
+    detail: `The advert does not clearly confirm ${profile.workPreference} work.`,
+    label: 'Pattern not clear',
+    status: 'amber',
+  }
+}
+
+function requirementForTerm({
+  candidateText,
+  category,
+  isMatched,
+  term,
+}: {
+  candidateText: string
+  category: ScoutRequirementCategory
+  isMatched: boolean
+  term: string
+}): ScoutRequirement {
+  const evidence = sentenceForTerm(candidateText, term)
+  const status = isMatched ? 'green' : category === 'mandatory' ? 'red' : 'amber'
+
+  return {
+    category,
+    detail: isMatched
+      ? 'Use this as proof in the application.'
+      : category === 'mandatory'
+        ? 'This looks mandatory and is not proven yet.'
+        : category === 'preferred'
+          ? 'This is an extra advantage if the user can prove it.'
+          : 'This core responsibility needs stronger proof or honest adjacent wording.',
+    evidence,
+    status,
+    term,
+  }
+}
+
+function checkForRequirement(requirement: ScoutRequirement): ScoutCheck {
+  return {
+    detail: requirement.evidence || requirement.detail,
+    label: requirement.term,
+    status: requirement.status === 'green' ? 'green' : requirement.status === 'red' ? 'red' : 'amber',
+  }
+}
+
+function groupStatus(items: readonly ScoutCheck[], emptyStatus: ScoutSignalStatus = 'amber'): ScoutSignalStatus {
+  if (items.length === 0) return emptyStatus
+  if (items.some((item) => item.status === 'black')) return 'black'
+  if (items.some((item) => item.status === 'red')) return 'red'
+  if (items.some((item) => item.status === 'amber')) return 'amber'
+  return 'green'
+}
+
+function coverageCheck(label: string, matchedCount: number, totalCount: number, missingIsRed = false): ScoutCheck {
+  if (totalCount === 0) {
+    return {
+      detail: 'No clear terms were extracted for this section.',
+      label,
+      status: 'amber',
+    }
+  }
+
+  if (matchedCount === totalCount) {
+    return {
+      detail: `${matchedCount}/${totalCount} proven.`,
+      label,
+      status: 'green',
+    }
+  }
+
+  if (matchedCount > 0) {
+    return {
+      detail: `${matchedCount}/${totalCount} proven; strengthen the missing proof before applying.`,
+      label,
+      status: 'amber',
+    }
+  }
+
+  return {
+    detail: `0/${totalCount} proven.`,
+    label,
+    status: missingIsRed ? 'red' : 'amber',
+  }
 }
 
 function statusLabel(status: ScoutMatchStatus) {
@@ -344,32 +594,47 @@ function statusLabel(status: ScoutMatchStatus) {
   return 'Black - avoid or challenge'
 }
 
-function summaryFor(status: ScoutMatchStatus, evidenceTerms: string[], missingTerms: string[], warnings: string[]) {
+function summaryFor({
+  evidenceTerms,
+  missingMandatory,
+  missingResponsibilities,
+  status,
+  warnings,
+}: {
+  evidenceTerms: string[]
+  missingMandatory: string[]
+  missingResponsibilities: string[]
+  status: ScoutMatchStatus
+  warnings: string[]
+}) {
   if (status === 'black') {
     return `Do not treat this as a good opportunity until the warning is answered: ${warnings[0] ?? 'bad conditions'}.`
   }
 
   if (status === 'red') {
-    return `This advert asks for proof the profile does not currently show: ${missingTerms.slice(0, 3).join(', ')}.`
+    return `This advert asks for mandatory proof the profile does not currently show: ${missingMandatory.slice(0, 3).join(', ') || missingResponsibilities.slice(0, 3).join(', ')}.`
   }
 
   if (status === 'green') {
     return `This looks worth attention because the profile can already prove ${evidenceTerms.slice(0, 4).join(', ')}.`
   }
 
-  return `This could be worth applying for, but the CV needs clearer proof around ${missingTerms.slice(0, 3).join(', ') || 'the role requirements'}.`
+  return `This could be worth applying for, but the CV or advert needs more clarity around ${[
+    ...missingMandatory,
+    ...missingResponsibilities,
+  ].slice(0, 3).join(', ') || 'pay, pattern, or role proof'}.`
 }
 
 function employerQuestions({
   missingMandatory,
-  salaryFloor,
-  salaryWarning,
+  payCheck,
   warnings,
+  workPatternCheck,
 }: {
   missingMandatory: readonly string[]
-  salaryFloor: SalaryValue | null
-  salaryWarning: string
+  payCheck: ScoutCheck
   warnings: readonly string[]
+  workPatternCheck: ScoutCheck
 }) {
   const questions: string[] = []
 
@@ -377,12 +642,12 @@ function employerQuestions({
     questions.push('Is this employed directly by the company, through an agency, or through umbrella payroll?')
   }
 
-  if (salaryWarning) {
-    questions.push(
-      salaryFloor
-        ? `Can you confirm the pay is at or above ${salaryLabel(salaryFloor)} before interview?`
-        : 'Can you confirm the real pay range and hours before interview?',
-    )
+  if (payCheck.status !== 'green') {
+    questions.push('Can you confirm the real pay range and hours before interview?')
+  }
+
+  if (workPatternCheck.status !== 'green') {
+    questions.push('Can you confirm the working pattern, location, shifts, and travel expectations?')
   }
 
   if (missingMandatory.length > 0) {
@@ -397,24 +662,39 @@ function employerQuestions({
 
 function scoreMatch({
   hardWarnings,
-  jobTerms,
-  matchingPreferred,
-  matched,
-  missingMandatory,
+  mandatoryMatched,
+  mandatoryTotal,
+  payCheck,
+  preferredMatched,
+  preferredTotal,
+  responsibilityMatched,
+  responsibilityTotal,
   warnings,
+  workPatternCheck,
 }: {
   hardWarnings: readonly string[]
-  jobTerms: readonly string[]
-  matchingPreferred: readonly string[]
-  matched: readonly string[]
-  missingMandatory: readonly string[]
+  mandatoryMatched: number
+  mandatoryTotal: number
+  payCheck: ScoutCheck
+  preferredMatched: number
+  preferredTotal: number
+  responsibilityMatched: number
+  responsibilityTotal: number
   warnings: readonly string[]
+  workPatternCheck: ScoutCheck
 }) {
-  const base = jobTerms.length === 0 ? 42 : 36 + Math.round((matched.length / jobTerms.length) * 54)
-  const bonus = matchingPreferred.length > 0 ? 7 : 0
-  const penalty = warnings.length * 5 + missingMandatory.length * 18 + hardWarnings.length * 28
+  const mandatoryScore = mandatoryTotal === 0 ? 20 : Math.round((mandatoryMatched / mandatoryTotal) * 28)
+  const responsibilityScore =
+    responsibilityTotal === 0 ? 14 : Math.round((responsibilityMatched / responsibilityTotal) * 34)
+  const preferredScore = preferredTotal === 0 ? 4 : Math.round((preferredMatched / preferredTotal) * 10)
+  const payAdjustment = payCheck.status === 'green' ? 6 : payCheck.status === 'black' ? -34 : -6
+  const workAdjustment = workPatternCheck.status === 'green' ? 6 : workPatternCheck.status === 'red' ? -18 : -5
+  const warningPenalty = warnings.length * 4 + hardWarnings.length * 24
 
-  return Math.min(96, Math.max(8, base + bonus - penalty))
+  return Math.min(
+    96,
+    Math.max(8, 18 + mandatoryScore + responsibilityScore + preferredScore + payAdjustment + workAdjustment - warningPenalty),
+  )
 }
 
 export function buildScoutMatches(profile: ScoutProfile, jobs: readonly ScoutJob[]): ScoutMatch[] {
@@ -422,97 +702,204 @@ export function buildScoutMatches(profile: ScoutProfile, jobs: readonly ScoutJob
   const candidateTerms = extractKnownTerms(candidateText)
   const preferredPhrases = splitPhrases(profile.preferredRoles)
   const refusedPhrases = splitPhrases(profile.refusedRoles)
-  const salaryFloor = parseSalary(profile.salaryFloor)
 
   const matches = jobs.map((job) => {
-    const jobTerms = extractKnownTerms(job.text)
-    const evidenceTerms = jobTerms.filter((term) => candidateTerms.some((candidateTerm) => normalise(candidateTerm) === normalise(term)))
-    const missingTerms = jobTerms.filter((term) => !evidenceTerms.includes(term))
-    const missingMandatory = missingTerms.filter((term) => termAppearsNearMandatory(job.text, term))
+    const jobSignals = extractJobSignals(job.text)
     const matchingPreferred = matchingPhrases(job.text, preferredPhrases)
     const matchingRefused = matchingPhrases(job.text, refusedPhrases)
     const cautionHits = cautionPatterns.filter((pattern) => pattern.regex.test(job.text))
     const hardWarnings: string[] = cautionHits.filter((pattern) => pattern.severity === 'hard').map((pattern) => pattern.label)
-    const warnings: string[] = unique(cautionHits.map((pattern) => pattern.label))
-    const jobSalary = parseSalary(job.text)
-    const salaryWarning =
-      salaryFloor && jobSalary && salaryFloor.period === jobSalary.period && jobSalary.value < salaryFloor.value
-        ? `Pay appears below floor (${salaryLabel(jobSalary)} shown, ${salaryLabel(salaryFloor)} wanted)`
-        : salaryFloor && !jobSalary
-          ? 'Pay is not clear against the salary floor'
-          : ''
-    const preferenceWarning = workPreferenceWarning(profile, job.text)
+    const softWarnings: string[] = cautionHits.filter((pattern) => pattern.severity === 'warning').map((pattern) => pattern.label)
+    const payCheck = payCheckFor(profile, job.text)
+    const workPatternCheck = workPatternCheckFor(profile, job.text)
 
     if (matchingRefused.length > 0) {
       hardWarnings.push(`Refused role match: ${matchingRefused.slice(0, 2).join(', ')}`)
     }
 
-    if (salaryWarning.includes('below floor')) {
-      hardWarnings.push(salaryWarning)
-    } else if (salaryWarning) {
-      warnings.push(salaryWarning)
+    if (payCheck.status === 'black') {
+      hardWarnings.push(payCheck.label)
+    } else if (payCheck.status === 'amber') {
+      softWarnings.push(payCheck.label)
     }
 
-    if (preferenceWarning) {
-      warnings.push(preferenceWarning)
+    if (workPatternCheck.status === 'red') {
+      softWarnings.push(workPatternCheck.label)
+    } else if (workPatternCheck.status === 'amber') {
+      softWarnings.push(workPatternCheck.label)
     }
 
     if (preferredPhrases.length > 0 && matchingPreferred.length === 0) {
-      warnings.push('Does not clearly match preferred role types')
+      softWarnings.push('Does not clearly match preferred role types')
     }
 
+    const mandatoryRequirements = jobSignals.mandatoryTerms.map((term) =>
+      requirementForTerm({
+        candidateText,
+        category: 'mandatory',
+        isMatched: candidateTerms.some((candidateTerm) => normalise(candidateTerm) === normalise(term)),
+        term,
+      }),
+    )
+    const preferredRequirements = jobSignals.preferredTerms.map((term) =>
+      requirementForTerm({
+        candidateText,
+        category: 'preferred',
+        isMatched: candidateTerms.some((candidateTerm) => normalise(candidateTerm) === normalise(term)),
+        term,
+      }),
+    )
+    const responsibilityRequirements = jobSignals.responsibilityTerms.map((term) =>
+      requirementForTerm({
+        candidateText,
+        category: 'responsibility',
+        isMatched: candidateTerms.some((candidateTerm) => normalise(candidateTerm) === normalise(term)),
+        term,
+      }),
+    )
+    const requirementMap = [...mandatoryRequirements, ...responsibilityRequirements, ...preferredRequirements]
+    const evidenceTerms = requirementMap.filter((item) => item.status === 'green').map((item) => item.term)
+    const missingMandatory = mandatoryRequirements.filter((item) => item.status !== 'green').map((item) => item.term)
+    const missingResponsibilities = responsibilityRequirements
+      .filter((item) => item.status !== 'green')
+      .map((item) => item.term)
+    const missingPreferred = preferredRequirements.filter((item) => item.status !== 'green').map((item) => item.term)
+    const missingTerms = unique([...missingMandatory, ...missingResponsibilities, ...missingPreferred])
+    const allWarnings = unique([...hardWarnings, ...softWarnings])
+    const mandatoryMatched = mandatoryRequirements.filter((item) => item.status === 'green').length
+    const responsibilityMatched = responsibilityRequirements.filter((item) => item.status === 'green').length
+    const preferredMatched = preferredRequirements.filter((item) => item.status === 'green').length
     const score = scoreMatch({
       hardWarnings,
-      jobTerms,
-      matchingPreferred,
-      matched: evidenceTerms,
-      missingMandatory,
-      warnings,
+      mandatoryMatched,
+      mandatoryTotal: mandatoryRequirements.length,
+      payCheck,
+      preferredMatched,
+      preferredTotal: preferredRequirements.length,
+      responsibilityMatched,
+      responsibilityTotal: responsibilityRequirements.length,
+      warnings: softWarnings,
+      workPatternCheck,
     })
-    const status: ScoutMatchStatus =
+    const mandatoryCoverage = coverageCheck(
+      'Mandatory proof',
+      mandatoryMatched,
+      mandatoryRequirements.length,
+      true,
+    )
+    const responsibilityCoverage = coverageCheck(
+      'Responsibilities',
+      responsibilityMatched,
+      responsibilityRequirements.length,
+    )
+    const preferredCoverage = coverageCheck('Preferred extras', preferredMatched, preferredRequirements.length)
+    const warningCheck: ScoutCheck =
       hardWarnings.length > 0
+        ? {
+            detail: `${hardWarnings.length} hard warning${hardWarnings.length === 1 ? '' : 's'} found.`,
+            label: 'Hard warnings',
+            status: 'black',
+          }
+        : softWarnings.length > 0
+          ? {
+              detail: `${softWarnings.length} check${softWarnings.length === 1 ? '' : 's'} before applying.`,
+              label: 'Warnings',
+              status: 'amber',
+            }
+          : {
+              detail: 'No bad-condition signals found.',
+              label: 'Warnings',
+              status: 'green',
+            }
+    const scoreBreakdown = [mandatoryCoverage, responsibilityCoverage, preferredCoverage, payCheck, workPatternCheck, warningCheck]
+    const status: ScoutMatchStatus =
+      hardWarnings.length > 0 || payCheck.status === 'black'
         ? 'black'
-        : missingMandatory.length > 0
+        : missingMandatory.length > 0 || workPatternCheck.status === 'red'
           ? 'red'
-          : score >= 74 && missingTerms.length <= Math.max(2, Math.floor(jobTerms.length / 3))
+          : score >= 74 && responsibilityCoverage.status === 'green' && payCheck.status === 'green'
             ? 'green'
-            : score >= 48
+            : score >= 45
               ? 'amber'
               : 'red'
-
-    const allWarnings = unique([...hardWarnings, ...warnings])
-    const requirementMap = jobTerms.map((term) => {
-      const evidence = sentenceForTerm(candidateText, term)
-      const isMatched = evidenceTerms.includes(term)
-      const isMandatoryGap = missingMandatory.includes(term)
-
-      return {
-        detail: isMatched
-          ? 'Use this as proof in the application.'
-          : isMandatoryGap
-            ? 'This looks mandatory and is not proven yet.'
-            : 'This may be trainable or adjacent, but it needs honest wording.',
-        evidence,
-        status: isMatched ? 'green' : isMandatoryGap ? 'red' : 'amber',
-        term,
-      } satisfies ScoutRequirement
-    })
+    const signalGroups: ScoutSignalGroup[] = [
+      {
+        id: 'mandatory',
+        items:
+          mandatoryRequirements.length > 0
+            ? mandatoryRequirements.map(checkForRequirement)
+            : [{ detail: 'No mandatory requirement language detected.', label: 'Mandatory proof', status: 'amber' }],
+        label: 'Mandatory proof',
+        status: groupStatus(mandatoryRequirements.map(checkForRequirement)),
+      },
+      {
+        id: 'responsibilities',
+        items:
+          responsibilityRequirements.length > 0
+            ? responsibilityRequirements.map(checkForRequirement)
+            : [{ detail: 'No clear responsibility language detected.', label: 'Responsibilities', status: 'amber' }],
+        label: 'Responsibilities',
+        status: groupStatus(responsibilityRequirements.map(checkForRequirement)),
+      },
+      {
+        id: 'preferred',
+        items:
+          preferredRequirements.length > 0
+            ? preferredRequirements.map(checkForRequirement)
+            : [{ detail: 'No preferred or bonus requirements detected.', label: 'Preferred extras', status: 'green' }],
+        label: 'Preferred extras',
+        status: groupStatus(preferredRequirements.map(checkForRequirement), 'green'),
+      },
+      {
+        id: 'pay',
+        items: [payCheck],
+        label: 'Pay check',
+        status: payCheck.status,
+      },
+      {
+        id: 'work-pattern',
+        items: [workPatternCheck],
+        label: 'Work pattern',
+        status: workPatternCheck.status,
+      },
+      {
+        id: 'warnings',
+        items:
+          allWarnings.length > 0
+            ? allWarnings.map((warning) => ({
+                detail: hardWarnings.includes(warning) ? 'Hard warning: question or avoid this role.' : 'Check this before applying.',
+                label: warning,
+                status: hardWarnings.includes(warning) ? 'black' : 'amber',
+              }))
+            : [{ detail: 'No agency/payroll/scam-style warning found.', label: 'Warnings', status: 'green' }],
+        label: 'Warnings',
+        status: warningCheck.status,
+      },
+    ]
 
     return {
       employerQuestions: employerQuestions({
         missingMandatory,
-        salaryFloor,
-        salaryWarning,
+        payCheck,
         warnings: allWarnings,
+        workPatternCheck,
       }),
       evidenceTerms,
       job,
       missingTerms,
       requirementMap,
       score,
+      scoreBreakdown,
+      signalGroups,
       status,
       statusLabel: statusLabel(status),
-      summary: summaryFor(status, evidenceTerms, missingTerms, allWarnings),
+      summary: summaryFor({
+        evidenceTerms,
+        missingMandatory,
+        missingResponsibilities,
+        status,
+        warnings: allWarnings,
+      }),
       warnings: allWarnings,
     } satisfies ScoutMatch
   })

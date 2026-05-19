@@ -2557,6 +2557,18 @@ function App() {
                             <strong>{match.warnings.length}</strong>
                           </div>
                         </div>
+                        <div className="scout-score-breakdown" aria-label={`${match.job.title} score breakdown`}>
+                          <span className="section-kicker">Why this score</span>
+                          <div>
+                            {match.scoreBreakdown.map((item) => (
+                              <span className={`scout-score-factor ${item.status}`} key={item.label}>
+                                <span className={`status-light ${scoutLightFor(item.status)}`} aria-hidden="true"></span>
+                                <strong>{item.label}</strong>
+                                {item.detail}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                         <div className="chip-list">
                           {match.evidenceTerms.slice(0, 6).map((term) => (
                             <span className="chip positive" key={term}>
@@ -2575,26 +2587,26 @@ function App() {
                             </span>
                           ))}
                         </div>
-                        <div className="scout-requirements" aria-label={`${match.job.title} requirement map`}>
-                          {match.requirementMap.length > 0 ? (
-                            match.requirementMap.slice(0, 6).map((item) => (
-                              <div className={`scout-requirement ${item.status}`} key={item.term}>
-                                <span className={`status-light ${item.status === 'green' ? 'done' : item.status === 'amber' ? 'next' : 'blocked'}`} aria-hidden="true"></span>
-                                <p>
-                                  <strong>{item.term}</strong>
-                                  {item.evidence || item.detail}
-                                </p>
+                        <div className="scout-signal-groups" aria-label={`${match.job.title} Scout signals`}>
+                          {match.signalGroups.map((group) => (
+                            <section className={`scout-signal-group ${group.status}`} key={group.id}>
+                              <div className="scout-signal-head">
+                                <span className={`status-light ${scoutLightFor(group.status)}`} aria-hidden="true"></span>
+                                <strong>{group.label}</strong>
                               </div>
-                            ))
-                          ) : (
-                            <div className="scout-requirement amber">
-                              <span className="status-light next" aria-hidden="true"></span>
-                              <p>
-                                <strong>Manual read needed</strong>
-                                This advert does not contain enough recognised role language yet.
-                              </p>
-                            </div>
-                          )}
+                              <div className="scout-signal-list">
+                                {group.items.slice(0, 5).map((item) => (
+                                  <div className={`scout-requirement ${item.status}`} key={`${group.id}-${item.label}`}>
+                                    <span className={`status-light ${scoutLightFor(item.status)}`} aria-hidden="true"></span>
+                                    <p>
+                                      <strong>{item.label}</strong>
+                                      {item.detail}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+                          ))}
                         </div>
                         <div className="scout-questions">
                           <span className="section-kicker">Questions to ask</span>

@@ -40,6 +40,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Local mock analysis that works without an API key.
 - Scout Mode for building a local candidate profile and job basket.
 - Honest job shortlist with green, amber, red, and black suitability.
+- Structured Scout reasons for mandatory proof, responsibilities, preferred extras, pay checks, work pattern, and warnings.
 - Scout warnings for missing mandatory proof, refused role types, unclear pay, agency-style listings, umbrella payroll, zero-hours terms, commission-only terms, and other bad-condition signals.
 - Handoff from a Scout job card into the existing one-job Rolefit CV workflow.
 - Provider selector for OpenAI, Claude, and Gemini.
@@ -146,7 +147,7 @@ npm run build
 
 Planned next slices:
 
-- Improve Scout matching with stronger requirement extraction and clearer location/pay handling.
+- Improve Scout matching with more real-world advert examples and user feedback.
 - Add saved application tracker states for shortlisted jobs.
 - OCR support for scanned PDFs.
 - Job URL import for readable adverts.
