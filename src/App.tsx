@@ -24,7 +24,7 @@ import {
   type ProviderId,
   type ProviderRunResult,
 } from './ai/rolefitProvider'
-import { qualityGateForAnalysis } from './analysis/qualityGate'
+import { qualityGateForAnalysis, type QualityGateResult } from './analysis/qualityGate'
 import {
   extractImportedDocumentText,
   importAccept,
@@ -133,6 +133,14 @@ type Analysis = {
   }
   questions: string[]
   coaching: string[]
+}
+
+type ComparisonCandidate = {
+  actionDetail: string
+  id: 'local' | 'selected'
+  qualityGate: QualityGateResult
+  recommendation: 'recommended' | 'available' | 'locked'
+  run: ProviderRunResult<Analysis>
 }
 
 const providers: Array<{ id: ProviderId; label: string; note: string }> = [
@@ -1188,6 +1196,10 @@ function App() {
   const [analysisRunKey, setAnalysisRunKey] = useState('')
   const [analysisError, setAnalysisError] = useState('')
   const [isAnalysing, setIsAnalysing] = useState(false)
+  const [comparisonCandidates, setComparisonCandidates] = useState<ComparisonCandidate[]>([])
+  const [comparisonError, setComparisonError] = useState('')
+  const [comparisonRunKey, setComparisonRunKey] = useState('')
+  const [isComparing, setIsComparing] = useState(false)
   const [importStatuses, setImportStatuses] = useState<Record<ImportTarget, ImportStatus>>({
     cv: emptyImportStatus,
     job: emptyImportStatus,
@@ -1215,9 +1227,18 @@ function App() {
     () => `${inputKey}\n---rolefit-provider---\n${provider}\n---rolefit-model---\n${selectedModel}`,
     [inputKey, provider, selectedModel],
   )
+  const apiKeyPresent = apiKey.trim().length > 0
+  const comparisonKey = useMemo(
+    () => `${analysisKey}\n---rolefit-session-key---\n${apiKeyPresent ? 'present' : 'missing'}`,
+    [analysisKey, apiKeyPresent],
+  )
   const hasCv = cvText.trim().length >= 60
   const hasJob = jobText.trim().length >= 60
   const importReady = hasCv && hasJob
+  const comparisonReady = importReady && modelReady && provider !== 'mock'
+  const currentComparisonCandidates =
+    comparisonReady && comparisonRunKey === comparisonKey ? comparisonCandidates : []
+  const hasCurrentComparison = currentComparisonCandidates.length > 0
   const draftAnalysis = useMemo(() => buildAnalysis(cvText, jobText), [cvText, jobText])
   const currentAnalysisRun = importReady && analysisRunKey === analysisKey ? analysisRun : null
   const analysis = currentAnalysisRun?.analysis ?? draftAnalysis
@@ -1521,12 +1542,14 @@ function App() {
     setProvider(nextProvider)
     setModel(modelOptions[nextProvider][0])
     setAnalysisError('')
+    resetComparisonState()
   }
 
   function handleModelChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextModel = event.target.value
     setModel(nextModel === customModelOption ? '' : nextModel)
     setAnalysisError('')
+    resetComparisonState()
   }
 
   function setEvidenceChoice(term: string, choice: EvidenceReviewChoice) {
@@ -1613,6 +1636,7 @@ function App() {
   function addProofPromptToCv(terms: ClaimTermSafety[]) {
     setCvText((current) => `${current.trim()}\n\n${proofPromptForClaimTerms(terms)}`)
     setAnalysisRunKey('')
+    resetComparisonState()
     setEvidenceChoices({})
     setEvidenceReviewedKey('')
     setEditedRewrite(null)
@@ -1628,6 +1652,7 @@ function App() {
 
   function resetWorkflowAfterInputChange() {
     setAnalysisRunKey('')
+    resetComparisonState()
     setEvidenceChoices({})
     setEvidenceReviewedKey('')
     setEditedRewrite(null)
@@ -1737,8 +1762,76 @@ function App() {
     }
   }
 
+  function resetComparisonState() {
+    setComparisonCandidates([])
+    setComparisonError('')
+    setComparisonRunKey('')
+  }
+
+  function applyAnalysisRun(nextRun: ProviderRunResult<Analysis>, lastRunLabel: string) {
+    const nextInterviewQuestion = interviewQuestionsForAnalysis(nextRun.analysis)[0]
+
+    setAnalysisRun(nextRun)
+    setAnalysisRunKey(analysisKey)
+    setEvidenceChoices({})
+    setEvidenceReviewedKey('')
+    setEditedRewrite(null)
+    setEditedRewriteKey('')
+    setRewriteDoneKey('')
+    setCoachDoneKey('')
+    setInterviewDoneKey('')
+    setPackDoneKey('')
+    setSelectedQuestion(0)
+    setInterviewStar(nextInterviewQuestion ? starDraftForQuestion(nextRun.analysis, nextInterviewQuestion) : emptyStarDraft)
+    setActiveTab('tailor')
+    setLastRun(lastRunLabel)
+  }
+
+  function comparisonCandidateCanBeUsed(candidate: ComparisonCandidate) {
+    return candidate.run.mode === 'local-mock' || candidate.run.mode === 'provider-live'
+  }
+
+  function comparisonActionDetail(run: ProviderRunResult<Analysis>) {
+    if (run.mode === 'local-mock') return 'Local baseline is available without sending a provider request.'
+    if (run.mode === 'provider-live') return 'Live structured output is available for this workflow.'
+    if (run.mode === 'provider-needs-key') return `${run.providerLabel} needs a session key before live comparison.`
+    if (run.transportLabel === 'Local fallback') {
+      return 'Live request fell back locally, so this row cannot be used as a live provider result.'
+    }
+    return 'Provider contract is visible, but this is not a live provider result yet.'
+  }
+
+  function comparisonCandidatesFor(
+    localRun: ProviderRunResult<Analysis>,
+    selectedRun: ProviderRunResult<Analysis>,
+  ): ComparisonCandidate[] {
+    const localQualityGate = qualityGateForAnalysis({ analysis: localRun.analysis, cvText, jobText })
+    const selectedQualityGate = qualityGateForAnalysis({ analysis: selectedRun.analysis, cvText, jobText })
+    const selectedIsLive = selectedRun.mode === 'provider-live'
+    const selectedWins =
+      selectedIsLive &&
+      (selectedQualityGate.score > localQualityGate.score || selectedQualityGate.score === localQualityGate.score)
+
+    return [
+      {
+        actionDetail: comparisonActionDetail(localRun),
+        id: 'local',
+        qualityGate: localQualityGate,
+        recommendation: selectedWins ? 'available' : 'recommended',
+        run: localRun,
+      },
+      {
+        actionDetail: comparisonActionDetail(selectedRun),
+        id: 'selected',
+        qualityGate: selectedQualityGate,
+        recommendation: selectedIsLive ? (selectedWins ? 'recommended' : 'available') : 'locked',
+        run: selectedRun,
+      },
+    ]
+  }
+
   async function runAnalysis() {
-    if (!importReady || !modelReady || isAnalysing) return
+    if (!importReady || !modelReady || isAnalysing || isComparing) return
 
     setIsAnalysing(true)
     setAnalysisError('')
@@ -1753,22 +1846,9 @@ function App() {
         model: selectedModel,
         provider,
       })
-      const nextInterviewQuestion = interviewQuestionsForAnalysis(nextRun.analysis)[0]
 
-      setAnalysisRun(nextRun)
-      setAnalysisRunKey(analysisKey)
-      setEvidenceChoices({})
-      setEvidenceReviewedKey('')
-      setEditedRewrite(null)
-      setEditedRewriteKey('')
-      setRewriteDoneKey('')
-      setCoachDoneKey('')
-      setInterviewDoneKey('')
-      setPackDoneKey('')
-      setSelectedQuestion(0)
-      setInterviewStar(nextInterviewQuestion ? starDraftForQuestion(nextRun.analysis, nextInterviewQuestion) : emptyStarDraft)
-      setActiveTab('tailor')
-      setLastRun(
+      applyAnalysisRun(
+        nextRun,
         `Updated ${new Date().toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -1779,6 +1859,55 @@ function App() {
     } finally {
       setIsAnalysing(false)
     }
+  }
+
+  async function compareProvider() {
+    if (!comparisonReady || isComparing || isAnalysing) return
+
+    setIsComparing(true)
+    setAnalysisError('')
+    setComparisonError('')
+
+    try {
+      const localAnalysis = buildAnalysis(cvText, jobText)
+      const selectedAnalysis = buildAnalysis(cvText, jobText)
+      const [localRun, selectedRun] = await Promise.all([
+        runRolefitProvider({
+          analysis: localAnalysis,
+          apiKey: '',
+          cvText,
+          jobText,
+          model: modelOptions.mock[0],
+          provider: 'mock',
+        }),
+        runRolefitProvider({
+          analysis: selectedAnalysis,
+          apiKey,
+          cvText,
+          jobText,
+          model: selectedModel,
+          provider,
+        }),
+      ])
+
+      setComparisonCandidates(comparisonCandidatesFor(localRun, selectedRun))
+      setComparisonRunKey(comparisonKey)
+      setLastRun(
+        `Compared ${new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}`,
+      )
+    } catch (error) {
+      setComparisonError(error instanceof Error ? error.message : 'The provider comparison could not complete.')
+    } finally {
+      setIsComparing(false)
+    }
+  }
+
+  function applyComparisonCandidate(candidate: ComparisonCandidate) {
+    if (!comparisonCandidateCanBeUsed(candidate)) return
+    applyAnalysisRun(candidate.run, `Used ${candidate.id === 'local' ? 'local mock baseline' : candidate.run.providerLabel}`)
   }
 
   async function copyRewrite() {
@@ -1867,6 +1996,7 @@ function App() {
                 onChange={(event) => {
                   setModel(event.target.value)
                   setAnalysisError('')
+                  resetComparisonState()
                 }}
                 placeholder="provider-model-id"
                 value={model}
@@ -1883,6 +2013,7 @@ function App() {
                 onChange={(event) => {
                   setApiKey(event.target.value)
                   setAnalysisError('')
+                  resetComparisonState()
                 }}
                 placeholder="Paste key for this session"
                 type="password"
@@ -1955,16 +2086,38 @@ function App() {
               <span className="section-kicker">Tailor to the role</span>
               <h2>Evidence in, targeted draft out</h2>
             </div>
-            <button className="icon-button action-button" disabled={!importReady || !modelReady || isAnalysing} onClick={runAnalysis} type="button">
-              <RefreshCw size={17} aria-hidden="true" />
-              <span>{isAnalysing ? 'Analysing' : 'Run analysis'}</span>
-            </button>
+            <div className="analysis-actions">
+              <button
+                className="icon-button"
+                disabled={!comparisonReady || isAnalysing || isComparing}
+                onClick={compareProvider}
+                type="button"
+              >
+                <SearchCheck size={17} aria-hidden="true" />
+                <span>{isComparing ? 'Comparing' : 'Compare provider'}</span>
+              </button>
+              <button
+                className="icon-button action-button"
+                disabled={!importReady || !modelReady || isAnalysing || isComparing}
+                onClick={runAnalysis}
+                type="button"
+              >
+                <RefreshCw size={17} aria-hidden="true" />
+                <span>{isAnalysing ? 'Analysing' : 'Run analysis'}</span>
+              </button>
+            </div>
           </div>
 
           {analysisError && (
             <div className="error-strip" role="alert">
               <span className="status-light blocked" aria-hidden="true"></span>
               <span>{analysisError}</span>
+            </div>
+          )}
+          {comparisonError && (
+            <div className="error-strip" role="alert">
+              <span className="status-light blocked" aria-hidden="true"></span>
+              <span>{comparisonError}</span>
             </div>
           )}
 
@@ -1996,6 +2149,100 @@ function App() {
               <textarea aria-label="Job advert" value={jobText} onChange={(event) => updateJobInput(event.target.value)} />
             </div>
           </div>
+
+          {provider !== 'mock' && (hasCurrentComparison || isComparing) && (
+            <div className="comparison-panel">
+              <div className="panel-head">
+                <div>
+                  <span className="section-kicker">Provider comparison</span>
+                  <h3>Choose the analysis to trust</h3>
+                </div>
+                <span className="comparison-summary-pill">
+                  {isComparing ? 'Running comparison' : `${currentComparisonCandidates.length} candidates`}
+                </span>
+              </div>
+              <p>
+                Comparison is a preview. The workflow only unlocks after you choose one result with Use this analysis.
+              </p>
+              {hasCurrentComparison ? (
+                <div className="comparison-list" aria-label="Provider comparison candidates">
+                  {currentComparisonCandidates.map((candidate) => {
+                    const candidateCanBeUsed = comparisonCandidateCanBeUsed(candidate)
+                    const candidateStatus =
+                      candidate.recommendation === 'locked'
+                        ? 'blocked'
+                        : candidate.recommendation === 'recommended'
+                          ? 'done'
+                          : 'next'
+
+                    return (
+                      <article className={`comparison-candidate ${candidateStatus}`} key={candidate.id}>
+                        <div className="comparison-candidate-head">
+                          <div>
+                            <span className="section-kicker">
+                              {candidate.id === 'local'
+                                ? 'Local mock baseline'
+                                : `${candidate.run.providerLabel} / ${candidate.run.model}`}
+                            </span>
+                            <h4>{candidate.run.statusTitle}</h4>
+                          </div>
+                          <div className="comparison-pills">
+                            {candidate.recommendation === 'recommended' && (
+                              <span className="comparison-pill recommended">Recommended</span>
+                            )}
+                            <span className="comparison-pill">{candidate.run.transportLabel}</span>
+                          </div>
+                        </div>
+                        <div className="comparison-metrics">
+                          <div>
+                            <span>Quality</span>
+                            <strong>{candidate.qualityGate.score}%</strong>
+                          </div>
+                          <div>
+                            <span>Mode</span>
+                            <strong>{candidate.run.mode}</strong>
+                          </div>
+                          <div>
+                            <span>API key</span>
+                            <strong>
+                              {candidate.run.keyState === 'present'
+                                ? 'Session key present'
+                                : candidate.run.keyState === 'missing'
+                                  ? 'Needed for live calls'
+                                  : 'Not required'}
+                            </strong>
+                          </div>
+                        </div>
+                        <p>{candidate.actionDetail}</p>
+                        <div className="comparison-checks">
+                          {candidate.qualityGate.items.slice(0, 4).map((item) => (
+                            <span className={`comparison-check ${item.status}`} key={item.id}>
+                              <span className={`status-light ${item.status}`} aria-hidden="true"></span>
+                              {item.label}: {item.metric}
+                            </span>
+                          ))}
+                        </div>
+                        <button
+                          className="icon-button action-button"
+                          disabled={!candidateCanBeUsed}
+                          onClick={() => applyComparisonCandidate(candidate)}
+                          type="button"
+                        >
+                          <Check size={17} aria-hidden="true" />
+                          <span>{candidateCanBeUsed ? 'Use this analysis' : 'Locked for workflow'}</span>
+                        </button>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="comparison-loading">
+                  <span className="status-light next" aria-hidden="true"></span>
+                  <strong>Comparing selected provider against local mock.</strong>
+                </div>
+              )}
+            </div>
+          )}
 
           {hasCurrentAnalysis ? (
             <div className="analysis-panel">

@@ -33,6 +33,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Provider contract card showing provider, model, contract version, and key state.
 - Live-provider guardrails for request size, timeout, and local fallback.
 - Analysis quality gate that checks provider output for completeness, CV grounding, role coverage, gap honesty, rewrite safety, and interview usefulness.
+- Selected-provider comparison against the local mock baseline before choosing which analysis to use.
 - Evidence map for job requirements.
 - Claim safety review before rewriting.
 - Editable targeted CV rewrite.
@@ -60,6 +61,8 @@ Live-provider requests are capped at 64 KB of CV text and 64 KB of job text. The
 If a live provider request fails, Rolefit falls back to local analysis so the workflow can continue.
 
 Every analysis run also passes through a local quality gate. This does not call an AI provider. It checks whether the returned output is complete, grounded in the CV text, mapped to the job advert, honest about gaps, safe for rewriting, and useful for interview practice.
+
+The comparison mode runs the selected provider against the local mock baseline and shows both quality-gate results. It does not unlock the workflow until the user chooses one analysis to use.
 
 ## Privacy Notes
 
@@ -125,7 +128,7 @@ npm run build
 Planned next slices:
 
 - OCR support for scanned PDFs.
-- Side-by-side provider comparison once live keys are available.
+- Full all-provider comparison once per-provider session keys are available.
 - More interview modes, including follow-up questions.
 - Saved application history.
 - Cleaner packaged desktop/local release.

@@ -425,6 +425,13 @@ textarea:focus {
   line-height: 1.12;
 }
 
+.analysis-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .icon-button,
 .tab,
 .question {
@@ -566,6 +573,155 @@ textarea {
   padding: 12px;
   resize: vertical;
   width: 100%;
+}
+
+.comparison-panel {
+  background: #fbfcfb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.comparison-summary-pill,
+.comparison-pill {
+  background: #ffffff;
+  border: 1px solid #dce8e3;
+  border-radius: 999px;
+  color: var(--muted-strong);
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 760;
+  min-height: 28px;
+  padding: 6px 10px;
+}
+
+.comparison-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.comparison-candidate {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 11px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.comparison-candidate.done {
+  background: #eff9f3;
+  border-color: #ccebd7;
+}
+
+.comparison-candidate.next {
+  background: #fff8e8;
+  border-color: #f2cb77;
+}
+
+.comparison-candidate.blocked {
+  background: #fff0ef;
+  border-color: #efc2bd;
+}
+
+.comparison-candidate-head {
+  align-items: start;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.comparison-candidate h4 {
+  font-size: 17px;
+  line-height: 1.2;
+  margin: 2px 0 0;
+}
+
+.comparison-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.comparison-pill.recommended {
+  background: var(--green-dark);
+  border-color: var(--green-dark);
+  color: #ffffff;
+}
+
+.comparison-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.comparison-metrics div {
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid #e2ebe7;
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.comparison-metrics span {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.comparison-metrics strong {
+  font-size: 13px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.comparison-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.comparison-check {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #e2ebe7;
+  border-radius: 999px;
+  color: var(--muted-strong);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 720;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.comparison-check.done {
+  border-color: #ccebd7;
+}
+
+.comparison-check.next {
+  border-color: #f2cb77;
+}
+
+.comparison-check.blocked {
+  border-color: #efc2bd;
+}
+
+.comparison-loading {
+  align-items: center;
+  background: #fff8e8;
+  border: 1px solid #f2cb77;
+  border-radius: 8px;
+  display: flex;
+  gap: 9px;
+  padding: 11px 12px;
 }
 
 .analysis-panel,
@@ -1633,6 +1789,7 @@ textarea {
   .match-grid,
   .coach-grid,
   .star-grid,
+  .comparison-list,
   .contract-guardrails,
   .contract-grid,
   .quality-gate-list {
@@ -1680,10 +1837,20 @@ textarea {
 
   .section-head,
   .panel-head,
+  .comparison-candidate-head,
   .quality-gate-head,
   .provider-run-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .analysis-actions,
+  .comparison-pills {
+    justify-content: stretch;
+  }
+
+  .comparison-metrics {
+    grid-template-columns: 1fr;
   }
 
   .interview-actions {
