@@ -5,15 +5,19 @@ import {
   BriefcaseBusiness,
   Check,
   Clipboard,
+  Compass,
   Download,
   FileText,
   KeyRound,
   Lock,
   Mic,
+  Plus,
   RefreshCw,
   SearchCheck,
+  Send,
   ShieldCheck,
   Sparkles,
+  Trash2,
   UserRoundCheck,
   type LucideIcon,
 } from 'lucide-react'
@@ -33,8 +37,17 @@ import {
   isSupportedImportFile,
   supportedImportMessage,
 } from './importers/documentText'
+import {
+  buildScoutMatches,
+  parseScoutJobAdverts,
+  type ScoutJob,
+  type ScoutMatchStatus,
+  type ScoutProfile,
+  type ScoutWorkPreference,
+} from './scout/scoutEngine'
 import './App.css'
 
+type WorkMode = 'rolefit' | 'scout'
 type TabId = 'tailor' | 'coach' | 'interview' | 'pack'
 type StepId = 'import' | 'analyse' | 'rewrite' | 'coach' | 'interview' | 'pack'
 type StepStatus = 'done' | 'next' | 'blocked'
@@ -104,7 +117,17 @@ type SavedDraft = {
   model: string
   practiceAnswer: string
   provider: ProviderId
+  scoutDescription: string
+  scoutJobs: ScoutJob[]
+  scoutLocation: string
+  scoutPreferredRoles: string
+  scoutQualifications: string
+  scoutRefusedRoles: string
+  scoutSalaryFloor: string
+  scoutTravelRadius: string
+  scoutWorkPreference: ScoutWorkPreference
   selectedQuestion: number
+  workMode: WorkMode
 }
 
 type EvidenceItem = {
@@ -288,6 +311,13 @@ const statusLabels: Record<StepStatus, string> = {
   blocked: 'Locked',
 }
 
+const scoutWorkPreferenceOptions: Array<{ id: ScoutWorkPreference; label: string }> = [
+  { id: 'any', label: 'Any' },
+  { id: 'remote', label: 'Remote' },
+  { id: 'hybrid', label: 'Hybrid' },
+  { id: 'on-site', label: 'On-site' },
+]
+
 function normalise(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
 }
@@ -344,6 +374,31 @@ function isProviderId(value: unknown): value is ProviderId {
   return providers.some((provider) => provider.id === value)
 }
 
+function isWorkMode(value: unknown): value is WorkMode {
+  return value === 'rolefit' || value === 'scout'
+}
+
+function isScoutWorkPreference(value: unknown): value is ScoutWorkPreference {
+  return scoutWorkPreferenceOptions.some((option) => option.id === value)
+}
+
+function readSavedScoutJobs(value: unknown): ScoutJob[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map((item): ScoutJob | null => {
+      if (!item || typeof item !== 'object') return null
+
+      const candidate = item as Partial<ScoutJob>
+      const text = typeof candidate.text === 'string' ? candidate.text.trim() : ''
+      const title = typeof candidate.title === 'string' && candidate.title.trim() ? candidate.title.trim() : 'Saved job advert'
+      const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id.trim() : `saved-${title}-${text.length}`
+
+      return text ? { id, text, title } : null
+    })
+    .filter((item): item is ScoutJob => Boolean(item))
+}
+
 function evidenceReviewKeyFor(
   analysisKey: string,
   requirementMap: RequirementEvidence[],
@@ -387,7 +442,17 @@ function loadSavedDraft(): Partial<SavedDraft> {
       model,
       practiceAnswer: typeof parsed.practiceAnswer === 'string' ? parsed.practiceAnswer : undefined,
       provider,
+      scoutDescription: typeof parsed.scoutDescription === 'string' ? parsed.scoutDescription : undefined,
+      scoutJobs: readSavedScoutJobs(parsed.scoutJobs),
+      scoutLocation: typeof parsed.scoutLocation === 'string' ? parsed.scoutLocation : undefined,
+      scoutPreferredRoles: typeof parsed.scoutPreferredRoles === 'string' ? parsed.scoutPreferredRoles : undefined,
+      scoutQualifications: typeof parsed.scoutQualifications === 'string' ? parsed.scoutQualifications : undefined,
+      scoutRefusedRoles: typeof parsed.scoutRefusedRoles === 'string' ? parsed.scoutRefusedRoles : undefined,
+      scoutSalaryFloor: typeof parsed.scoutSalaryFloor === 'string' ? parsed.scoutSalaryFloor : undefined,
+      scoutTravelRadius: typeof parsed.scoutTravelRadius === 'string' ? parsed.scoutTravelRadius : undefined,
+      scoutWorkPreference: isScoutWorkPreference(parsed.scoutWorkPreference) ? parsed.scoutWorkPreference : undefined,
       selectedQuestion: typeof parsed.selectedQuestion === 'number' ? Math.max(0, parsed.selectedQuestion) : undefined,
+      workMode: isWorkMode(parsed.workMode) ? parsed.workMode : undefined,
     }
   } catch {
     return {}
@@ -1176,6 +1241,7 @@ function ImportDropZone({
 function App() {
   const [savedDraft] = useState(() => loadSavedDraft())
   const initialProvider = savedDraft.provider ?? 'mock'
+  const [workMode, setWorkMode] = useState<WorkMode>(savedDraft.workMode ?? 'rolefit')
   const [provider, setProvider] = useState<ProviderId>(initialProvider)
   const [model, setModel] = useState(savedDraft.model ?? modelOptions[initialProvider][0])
   const [apiKey, setApiKey] = useState('')
@@ -1204,6 +1270,24 @@ function App() {
     cv: emptyImportStatus,
     job: emptyImportStatus,
   })
+  const [scoutDescription, setScoutDescription] = useState(
+    savedDraft.scoutDescription ??
+      'I want work where I can use real customer, operations, communication, and problem-solving evidence without pretending to be someone else.',
+  )
+  const [scoutQualifications, setScoutQualifications] = useState(savedDraft.scoutQualifications ?? '')
+  const [scoutLocation, setScoutLocation] = useState(savedDraft.scoutLocation ?? '')
+  const [scoutTravelRadius, setScoutTravelRadius] = useState(savedDraft.scoutTravelRadius ?? '20 miles')
+  const [scoutWorkPreference, setScoutWorkPreference] = useState<ScoutWorkPreference>(
+    savedDraft.scoutWorkPreference ?? 'any',
+  )
+  const [scoutSalaryFloor, setScoutSalaryFloor] = useState(savedDraft.scoutSalaryFloor ?? '')
+  const [scoutPreferredRoles, setScoutPreferredRoles] = useState(
+    savedDraft.scoutPreferredRoles ?? 'customer support, operations, customer success',
+  )
+  const [scoutRefusedRoles, setScoutRefusedRoles] = useState(savedDraft.scoutRefusedRoles ?? '')
+  const [scoutJobs, setScoutJobs] = useState<ScoutJob[]>(savedDraft.scoutJobs ?? [])
+  const [scoutJobInput, setScoutJobInput] = useState('')
+  const [scoutLastAction, setScoutLastAction] = useState('Paste job adverts into the basket to build a shortlist.')
   const [evidenceChoices, setEvidenceChoices] = useState<Record<string, EvidenceReviewChoice>>({})
   const [evidenceReviewedKey, setEvidenceReviewedKey] = useState('')
   const [rewriteDoneKey, setRewriteDoneKey] = useState('')
@@ -1239,6 +1323,63 @@ function App() {
   const currentComparisonCandidates =
     comparisonReady && comparisonRunKey === comparisonKey ? comparisonCandidates : []
   const hasCurrentComparison = currentComparisonCandidates.length > 0
+  const scoutProfile = useMemo<ScoutProfile>(
+    () => ({
+      cvText,
+      location: scoutLocation,
+      preferredRoles: scoutPreferredRoles,
+      qualifications: scoutQualifications,
+      refusedRoles: scoutRefusedRoles,
+      salaryFloor: scoutSalaryFloor,
+      selfDescription: scoutDescription,
+      travelRadius: scoutTravelRadius,
+      workPreference: scoutWorkPreference,
+    }),
+    [
+      cvText,
+      scoutDescription,
+      scoutLocation,
+      scoutPreferredRoles,
+      scoutQualifications,
+      scoutRefusedRoles,
+      scoutSalaryFloor,
+      scoutTravelRadius,
+      scoutWorkPreference,
+    ],
+  )
+  const scoutMatches = useMemo(() => buildScoutMatches(scoutProfile, scoutJobs), [scoutJobs, scoutProfile])
+  const scoutProfileHasDetails =
+    scoutDescription.trim().length > 0 ||
+    scoutQualifications.trim().length > 0 ||
+    scoutLocation.trim().length > 0 ||
+    scoutPreferredRoles.trim().length > 0
+  const scoutProfileStatus: StepStatus = hasCv && scoutProfileHasDetails ? 'done' : hasCv ? 'next' : 'blocked'
+  const scoutBasketStatus: StepStatus = scoutJobs.length > 0 ? 'done' : hasCv ? 'next' : 'blocked'
+  const scoutShortlistStatus: StepStatus = scoutJobs.length > 0 ? 'done' : 'blocked'
+  const scoutGuidance =
+    scoutProfileStatus === 'blocked'
+      ? {
+          detail: 'Add CV proof before Scout can rank jobs honestly.',
+          status: 'blocked' as StepStatus,
+          title: 'Add candidate proof',
+        }
+      : scoutProfileStatus === 'next'
+        ? {
+            detail: 'Add a short self-description, location, pay floor, or role preferences.',
+            status: 'next' as StepStatus,
+            title: 'Describe the person',
+          }
+        : scoutBasketStatus === 'next'
+          ? {
+              detail: 'Paste one or more job adverts. Use dividers when adding several.',
+              status: 'next' as StepStatus,
+              title: 'Build the job basket',
+            }
+          : {
+              detail: 'Review the honest shortlist, then send a chosen job into the Rolefit CV workflow.',
+              status: 'done' as StepStatus,
+              title: 'Shortlist ready',
+            }
   const draftAnalysis = useMemo(() => buildAnalysis(cvText, jobText), [cvText, jobText])
   const currentAnalysisRun = importReady && analysisRunKey === analysisKey ? analysisRun : null
   const analysis = currentAnalysisRun?.analysis ?? draftAnalysis
@@ -1532,10 +1673,39 @@ function App() {
       model: selectedModel,
       practiceAnswer,
       provider,
+      scoutDescription,
+      scoutJobs,
+      scoutLocation,
+      scoutPreferredRoles,
+      scoutQualifications,
+      scoutRefusedRoles,
+      scoutSalaryFloor,
+      scoutTravelRadius,
+      scoutWorkPreference,
       selectedQuestion: selectedQuestionIndex,
+      workMode,
     }
     window.localStorage.setItem(draftStorageKey, JSON.stringify(draft))
-  }, [confidence, cvText, interviewStar, jobText, practiceAnswer, provider, selectedModel, selectedQuestionIndex])
+  }, [
+    confidence,
+    cvText,
+    interviewStar,
+    jobText,
+    practiceAnswer,
+    provider,
+    scoutDescription,
+    scoutJobs,
+    scoutLocation,
+    scoutPreferredRoles,
+    scoutQualifications,
+    scoutRefusedRoles,
+    scoutSalaryFloor,
+    scoutTravelRadius,
+    scoutWorkPreference,
+    selectedModel,
+    selectedQuestionIndex,
+    workMode,
+  ])
 
   function handleProviderChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextProvider = event.target.value as ProviderId
@@ -1910,6 +2080,57 @@ function App() {
     applyAnalysisRun(candidate.run, `Used ${candidate.id === 'local' ? 'local mock baseline' : candidate.run.providerLabel}`)
   }
 
+  function scoutLightFor(status: ScoutMatchStatus) {
+    if (status === 'green') return 'done'
+    if (status === 'amber') return 'next'
+    if (status === 'red') return 'blocked'
+    return 'black'
+  }
+
+  function addScoutJobsFromInput() {
+    const parsedJobs = parseScoutJobAdverts(scoutJobInput)
+
+    if (parsedJobs.length === 0) {
+      setScoutLastAction('Paste at least one readable job advert. Use --- between adverts if adding several.')
+      return
+    }
+
+    const createdAt = Date.now()
+    const nextJobs = parsedJobs.map((job, index) => ({
+      ...job,
+      id: `scout-${createdAt}-${index}`,
+    }))
+
+    setScoutJobs((current) => [...nextJobs, ...current])
+    setScoutJobInput('')
+    setScoutLastAction(`${parsedJobs.length} job advert${parsedJobs.length === 1 ? '' : 's'} added to the basket.`)
+  }
+
+  function removeScoutJob(jobId: string) {
+    setScoutJobs((current) => current.filter((job) => job.id !== jobId))
+    setScoutLastAction('Job removed from the basket.')
+  }
+
+  function clearScoutJobs() {
+    setScoutJobs([])
+    setScoutLastAction('Job basket cleared.')
+  }
+
+  function sendScoutJobToRolefit(job: ScoutJob) {
+    setJobText(job.text)
+    resetWorkflowAfterInputChange()
+    setImportStatuses((current) => ({
+      ...current,
+      job: {
+        message: `${job.title} loaded from Scout. Review it before running analysis.`,
+        state: 'done',
+      },
+    }))
+    setActiveTab('tailor')
+    setWorkMode('rolefit')
+    setLastRun('Scout job selected')
+  }
+
   async function copyRewrite() {
     const rewriteText = [
       rewriteDraft.summary,
@@ -2031,6 +2252,372 @@ function App() {
         </div>
       </header>
 
+      <div className="mode-bar" aria-label="Rolefit work mode">
+        <div className="mode-switch">
+          <button
+            aria-pressed={workMode === 'rolefit'}
+            className={`mode-option ${workMode === 'rolefit' ? 'active' : ''}`}
+            onClick={() => setWorkMode('rolefit')}
+            type="button"
+          >
+            <FileText size={17} aria-hidden="true" />
+            <span>
+              <strong>Rolefit CV</strong>
+              One job application
+            </span>
+          </button>
+          <button
+            aria-pressed={workMode === 'scout'}
+            className={`mode-option ${workMode === 'scout' ? 'active' : ''}`}
+            onClick={() => setWorkMode('scout')}
+            type="button"
+          >
+            <Compass size={17} aria-hidden="true" />
+            <span>
+              <strong>Scout Mode</strong>
+              Worker-side shortlist
+            </span>
+          </button>
+        </div>
+        <p>
+          {workMode === 'scout'
+            ? 'Find roles the person can honestly prove, then prepare properly.'
+            : 'Tailor one CV to one job, then practise the interview story.'}
+        </p>
+      </div>
+
+      {workMode === 'scout' ? (
+        <div className="scout-workspace">
+          <aside className="workflow-rail scout-rail" aria-label="Scout workflow">
+            <div className="rail-heading">
+              <Compass size={18} aria-hidden="true" />
+              <span>Scout flow</span>
+            </div>
+            <div className="traffic-legend" aria-label="Scout status legend">
+              <span>
+                <i className="status-light done" aria-hidden="true"></i>
+                Green prove it
+              </span>
+              <span>
+                <i className="status-light next" aria-hidden="true"></i>
+                Orange strengthen it
+              </span>
+              <span>
+                <i className="status-light blocked" aria-hidden="true"></i>
+                Red do not fake it
+              </span>
+              <span>
+                <i className="status-light black" aria-hidden="true"></i>
+                Black question the role
+              </span>
+            </div>
+            {[
+              {
+                description: 'CV, strengths, limits',
+                icon: UserRoundCheck,
+                status: scoutProfileStatus,
+                title: 'Candidate proof',
+              },
+              {
+                description: `${scoutJobs.length} saved advert${scoutJobs.length === 1 ? '' : 's'}`,
+                icon: BriefcaseBusiness,
+                status: scoutBasketStatus,
+                title: 'Job basket',
+              },
+              {
+                description: 'Fit, gaps, warnings',
+                icon: SearchCheck,
+                status: scoutShortlistStatus,
+                title: 'Honest shortlist',
+              },
+            ].map((step, index) => {
+              const StepIcon = step.icon
+              return (
+                <div
+                  aria-current={step.status === 'next' ? 'step' : undefined}
+                  className={`workflow-step ${step.status}`}
+                  key={step.title}
+                >
+                  <span className="step-count">{index + 1}</span>
+                  <span className={`status-light ${step.status}`} aria-hidden="true"></span>
+                  <StepIcon size={18} aria-hidden="true" />
+                  <div>
+                    <strong>{step.title}</strong>
+                    <span>{step.description}</span>
+                    <em>{statusLabels[step.status]}</em>
+                  </div>
+                </div>
+              )
+            })}
+          </aside>
+
+          <section className="scout-main" aria-label="Scout mode">
+            <div className={`guidance-strip ${scoutGuidance.status}`}>
+              <span className={`status-light ${scoutGuidance.status}`} aria-hidden="true"></span>
+              <div>
+                <strong>{scoutGuidance.title}</strong>
+                <span>{scoutGuidance.detail}</span>
+              </div>
+            </div>
+
+            <section className="scout-panel">
+              <div className="section-head">
+                <div>
+                  <span className="section-kicker">Candidate profile</span>
+                  <h2>What can this person prove?</h2>
+                </div>
+                <span className={`scout-step-pill ${scoutProfileStatus}`}>
+                  <span className={`status-light ${scoutProfileStatus}`} aria-hidden="true"></span>
+                  {statusLabels[scoutProfileStatus]}
+                </span>
+              </div>
+              <div className="scout-profile-grid">
+                <div className="scout-field scout-wide">
+                  <span>CV proof source</span>
+                  <ImportDropZone
+                    buttonLabel="Import CV"
+                    onFile={handleImportFile}
+                    status={importStatuses.cv}
+                    target="cv"
+                  />
+                  <textarea aria-label="Scout CV proof source" value={cvText} onChange={(event) => updateCvInput(event.target.value)} />
+                </div>
+                <label className="scout-field scout-wide">
+                  <span>Self-description</span>
+                  <textarea
+                    aria-label="Self-description"
+                    onChange={(event) => setScoutDescription(event.target.value)}
+                    value={scoutDescription}
+                  />
+                </label>
+                <label className="scout-field">
+                  <span>Qualifications</span>
+                  <textarea
+                    aria-label="Qualifications"
+                    onChange={(event) => setScoutQualifications(event.target.value)}
+                    placeholder="Licences, tickets, certificates, school/college, training"
+                    value={scoutQualifications}
+                  />
+                </label>
+                <label className="scout-field">
+                  <span>Town or postcode</span>
+                  <input
+                    aria-label="Town or postcode"
+                    onChange={(event) => setScoutLocation(event.target.value)}
+                    placeholder="e.g. Manchester"
+                    value={scoutLocation}
+                  />
+                </label>
+                <label className="scout-field">
+                  <span>Travel range</span>
+                  <input
+                    aria-label="Travel range"
+                    onChange={(event) => setScoutTravelRadius(event.target.value)}
+                    placeholder="e.g. 20 miles"
+                    value={scoutTravelRadius}
+                  />
+                </label>
+                <label className="scout-field">
+                  <span>Work pattern</span>
+                  <select
+                    aria-label="Work pattern"
+                    onChange={(event) => setScoutWorkPreference(event.target.value as ScoutWorkPreference)}
+                    value={scoutWorkPreference}
+                  >
+                    {scoutWorkPreferenceOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="scout-field">
+                  <span>Pay floor</span>
+                  <input
+                    aria-label="Pay floor"
+                    onChange={(event) => setScoutSalaryFloor(event.target.value)}
+                    placeholder="e.g. 12.50/hour or 24000"
+                    value={scoutSalaryFloor}
+                  />
+                </label>
+                <label className="scout-field">
+                  <span>Roles wanted</span>
+                  <textarea
+                    aria-label="Roles wanted"
+                    onChange={(event) => setScoutPreferredRoles(event.target.value)}
+                    placeholder="Customer support, warehouse admin, junior analyst"
+                    value={scoutPreferredRoles}
+                  />
+                </label>
+                <label className="scout-field">
+                  <span>Roles refused</span>
+                  <textarea
+                    aria-label="Roles refused"
+                    onChange={(event) => setScoutRefusedRoles(event.target.value)}
+                    placeholder="Commission only, night shifts, door-to-door sales"
+                    value={scoutRefusedRoles}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="scout-panel">
+              <div className="section-head">
+                <div>
+                  <span className="section-kicker">Job basket</span>
+                  <h2>Paste adverts, do not auto-apply</h2>
+                </div>
+                <div className="analysis-actions">
+                  <button className="icon-button" disabled={scoutJobs.length === 0} onClick={clearScoutJobs} type="button">
+                    <Trash2 size={16} aria-hidden="true" />
+                    <span>Clear basket</span>
+                  </button>
+                  <button className="icon-button action-button" disabled={!scoutJobInput.trim()} onClick={addScoutJobsFromInput} type="button">
+                    <Plus size={16} aria-hidden="true" />
+                    <span>Add jobs</span>
+                  </button>
+                </div>
+              </div>
+              <textarea
+                aria-label="Paste one or more job adverts"
+                className="scout-job-input"
+                onChange={(event) => setScoutJobInput(event.target.value)}
+                placeholder={'Paste one advert, or separate several with a line containing ---'}
+                value={scoutJobInput}
+              />
+              <div className={`review-progress ${scoutBasketStatus}`}>
+                <span className={`status-light ${scoutBasketStatus}`} aria-hidden="true"></span>
+                <div>
+                  <strong>{scoutJobs.length} job advert{scoutJobs.length === 1 ? '' : 's'} in the basket</strong>
+                  <span>{scoutLastAction}</span>
+                </div>
+              </div>
+              {scoutJobs.length > 0 && (
+                <div className="scout-basket-list" aria-label="Saved job adverts">
+                  {scoutJobs.map((job) => (
+                    <article className="scout-basket-card" key={job.id}>
+                      <div>
+                        <strong>{job.title}</strong>
+                        <span>{job.text.length.toLocaleString()} characters</span>
+                      </div>
+                      <button className="icon-button" onClick={() => removeScoutJob(job.id)} type="button">
+                        <Trash2 size={15} aria-hidden="true" />
+                        <span>Remove</span>
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </section>
+
+          <section className="scout-shortlist" aria-label="Scout shortlist">
+            <div className="scout-panel">
+              <div className="panel-head">
+                <div>
+                  <span className="section-kicker">Honest shortlist</span>
+                  <h2>Jobs ranked by proof fit</h2>
+                </div>
+                <span className="comparison-summary-pill">{scoutMatches.length} ranked</span>
+              </div>
+              {scoutMatches.length === 0 ? (
+                <LockedPanel
+                  action={hasCv ? 'Add job adverts to the basket.' : 'Add CV proof first.'}
+                  message="Scout needs real CV evidence and real job adverts before it can say green, amber, red, or black."
+                  title="Shortlist is locked"
+                />
+              ) : (
+                <div className="scout-match-list">
+                  {scoutMatches.map((match) => {
+                    const light = scoutLightFor(match.status)
+                    return (
+                      <article className={`scout-match-card ${match.status}`} key={match.job.id}>
+                        <div className="scout-match-head">
+                          <div>
+                            <span className="section-kicker">{match.statusLabel}</span>
+                            <h3>{match.job.title}</h3>
+                          </div>
+                          <div className="scout-score">
+                            <strong>{match.score}</strong>
+                            <span>fit</span>
+                          </div>
+                        </div>
+                        <p>{match.summary}</p>
+                        <div className="scout-metrics">
+                          <div>
+                            <span>Proof</span>
+                            <strong>{match.evidenceTerms.length}</strong>
+                          </div>
+                          <div>
+                            <span>Gaps</span>
+                            <strong>{match.missingTerms.length}</strong>
+                          </div>
+                          <div>
+                            <span>Warnings</span>
+                            <strong>{match.warnings.length}</strong>
+                          </div>
+                        </div>
+                        <div className="chip-list">
+                          {match.evidenceTerms.slice(0, 6).map((term) => (
+                            <span className="chip positive" key={term}>
+                              <Check size={14} aria-hidden="true" />
+                              {term}
+                            </span>
+                          ))}
+                          {match.missingTerms.slice(0, 5).map((term) => (
+                            <span className="chip warning" key={term}>
+                              {term}
+                            </span>
+                          ))}
+                          {match.warnings.slice(0, 4).map((warning) => (
+                            <span className={`chip scout-warning ${match.status === 'black' ? 'black' : ''}`} key={warning}>
+                              {warning}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="scout-requirements" aria-label={`${match.job.title} requirement map`}>
+                          {match.requirementMap.length > 0 ? (
+                            match.requirementMap.slice(0, 6).map((item) => (
+                              <div className={`scout-requirement ${item.status}`} key={item.term}>
+                                <span className={`status-light ${item.status === 'green' ? 'done' : item.status === 'amber' ? 'next' : 'blocked'}`} aria-hidden="true"></span>
+                                <p>
+                                  <strong>{item.term}</strong>
+                                  {item.evidence || item.detail}
+                                </p>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="scout-requirement amber">
+                              <span className="status-light next" aria-hidden="true"></span>
+                              <p>
+                                <strong>Manual read needed</strong>
+                                This advert does not contain enough recognised role language yet.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="scout-questions">
+                          <span className="section-kicker">Questions to ask</span>
+                          {match.employerQuestions.map((question) => (
+                            <p key={question}>
+                              <span className={`status-light ${light}`} aria-hidden="true"></span>
+                              {question}
+                            </p>
+                          ))}
+                        </div>
+                        <button className="icon-button action-button" onClick={() => sendScoutJobToRolefit(match.job)} type="button">
+                          <Send size={17} aria-hidden="true" />
+                          <span>{match.status === 'black' ? 'Open in Rolefit anyway' : 'Send to Rolefit'}</span>
+                        </button>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : (
       <div className="workspace">
         <aside className="workflow-rail" aria-label="Workflow">
           <div className="rail-heading">
@@ -3054,6 +3641,7 @@ function App() {
           )}
         </section>
       </div>
+      )}
     </main>
   )
 }
