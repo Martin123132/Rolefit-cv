@@ -296,6 +296,10 @@ textarea:focus {
   background: #171f1d;
 }
 
+.status-light.idle {
+  background: #899590;
+}
+
 .mode-bar {
   align-items: center;
   background: rgba(255, 255, 255, 0.78);
@@ -971,6 +975,12 @@ textarea {
   gap: 7px;
 }
 
+.scout-tracker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .scout-filter-button {
   align-items: center;
   background: #ffffff;
@@ -1022,6 +1032,43 @@ textarea {
   display: flex;
   gap: 10px;
   justify-content: space-between;
+}
+
+.scout-due-strip {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2ebe7;
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 12px auto 1fr;
+  padding: 9px;
+}
+
+.scout-due-strip strong {
+  font-size: 13px;
+}
+
+.scout-due-strip span:last-child {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.scout-due-strip.future {
+  border-color: #ccebd7;
+}
+
+.scout-due-strip.due-today {
+  border-color: #f2cb77;
+}
+
+.scout-due-strip.overdue {
+  border-color: #efc2bd;
+}
+
+.scout-due-strip.closed {
+  border-color: #899590;
 }
 
 .scout-tracker-grid {
@@ -2472,7 +2519,8 @@ textarea {
   }
 
   .analysis-actions,
-  .comparison-pills {
+  .comparison-pills,
+  .scout-tracker-actions {
     justify-content: stretch;
   }
 
