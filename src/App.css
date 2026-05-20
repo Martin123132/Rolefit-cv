@@ -748,6 +748,66 @@ textarea {
   min-height: 138px;
 }
 
+.scout-url-import {
+  background: #fbfcfb;
+  border: 1px solid #e0e8e5;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.scout-url-row {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.scout-url-preview {
+  background: #ffffff;
+  border: 1px solid #dce8e3;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.scout-url-preview-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.scout-url-preview-head strong {
+  display: block;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.scout-url-source {
+  background: #fbfcfb;
+  border: 1px solid #e2ebe7;
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.scout-url-source span {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.scout-url-source strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .scout-job-input {
   min-height: 164px;
 }
@@ -2432,6 +2492,7 @@ textarea {
   .comparison-list,
   .contract-guardrails,
   .contract-grid,
+  .scout-url-row,
   .scout-tracker-counts,
   .quality-gate-list {
     grid-template-columns: 1fr;
@@ -2513,6 +2574,7 @@ textarea {
   .comparison-candidate-head,
   .quality-gate-head,
   .provider-run-head,
+  .scout-url-preview-head,
   .scout-match-head {
     align-items: stretch;
     flex-direction: column;

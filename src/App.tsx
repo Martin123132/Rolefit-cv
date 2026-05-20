@@ -187,6 +187,12 @@ type ScoutTrackerDueState = 'closed' | 'due-today' | 'future' | 'none' | 'overdu
 
 type ScoutTrackerState = Record<string, ScoutTrackerEntry>
 
+type ScoutUrlPreview = {
+  sourceUrl: string
+  text: string
+  title: string
+}
+
 const providers: Array<{ id: ProviderId; label: string; note: string }> = [
   { id: 'mock', label: 'Local mock', note: 'No request sent' },
   { id: 'openai', label: 'OpenAI', note: 'Bring your key' },
@@ -674,6 +680,13 @@ function scoutTrackerCsv(matches: readonly ScoutMatch[], trackerState: ScoutTrac
   ])
 
   return [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')
+}
+
+function statusLightForImportStatus(status: ImportStatus['state']) {
+  if (status === 'done') return 'done'
+  if (status === 'warning') return 'next'
+  if (status === 'error') return 'blocked'
+  return 'idle'
 }
 
 function evidenceReviewKeyFor(
@@ -1486,8 +1499,7 @@ function ImportDropZone({
     event.currentTarget.value = ''
   }
 
-  const statusLight =
-    status.state === 'done' ? 'done' : status.state === 'warning' ? 'next' : 'blocked'
+  const statusLight = statusLightForImportStatus(status.state)
 
   return (
     <div className="import-dropzone" onDragOver={handleDragOver} onDrop={handleDrop}>
@@ -1567,6 +1579,10 @@ function App() {
   const [scoutTracker, setScoutTracker] = useState<ScoutTrackerState>(savedDraft.scoutTracker ?? {})
   const [scoutTrackerFilter, setScoutTrackerFilter] = useState<ScoutTrackerFilter>('active')
   const [scoutJobInput, setScoutJobInput] = useState('')
+  const [scoutUrlInput, setScoutUrlInput] = useState('')
+  const [scoutUrlPreview, setScoutUrlPreview] = useState<ScoutUrlPreview | null>(null)
+  const [scoutUrlStatus, setScoutUrlStatus] = useState<ImportStatus>(emptyImportStatus)
+  const [isImportingScoutUrl, setIsImportingScoutUrl] = useState(false)
   const [scoutLastAction, setScoutLastAction] = useState('Paste job adverts into the basket to build a shortlist.')
   const [evidenceChoices, setEvidenceChoices] = useState<Record<string, EvidenceReviewChoice>>({})
   const [evidenceReviewedKey, setEvidenceReviewedKey] = useState('')
@@ -2410,6 +2426,38 @@ function App() {
     return 'black'
   }
 
+  function addScoutJobsToBasket(
+    jobs: Array<{ sourceUrl?: string; text: string; title: string }>,
+    message: string,
+  ) {
+    const createdAt = Date.now()
+    const nextJobs = jobs.map((job, index) => ({
+      text: job.text,
+      title: job.title,
+      id: `scout-${createdAt}-${index}`,
+    }))
+
+    setScoutJobs((current) => [...nextJobs, ...current])
+    setScoutTracker((current) => {
+      const updatedAt = new Date().toISOString()
+      const nextTracker = { ...current }
+      nextJobs.forEach((job, index) => {
+        nextTracker[job.id] = {
+          contact: '',
+          employer: '',
+          followUpDate: '',
+          nextAction: '',
+          notes: '',
+          sourceUrl: jobs[index].sourceUrl ?? '',
+          status: 'saved',
+          updatedAt,
+        }
+      })
+      return nextTracker
+    })
+    setScoutLastAction(message)
+  }
+
   function addScoutJobsFromInput() {
     const parsedJobs = parseScoutJobAdverts(scoutJobInput)
 
@@ -2418,32 +2466,97 @@ function App() {
       return
     }
 
-    const createdAt = Date.now()
-    const nextJobs = parsedJobs.map((job, index) => ({
-      ...job,
-      id: `scout-${createdAt}-${index}`,
-    }))
-
-    setScoutJobs((current) => [...nextJobs, ...current])
-    setScoutTracker((current) => {
-      const updatedAt = new Date().toISOString()
-      const nextTracker = { ...current }
-      nextJobs.forEach((job) => {
-        nextTracker[job.id] = {
-          contact: '',
-          employer: '',
-          followUpDate: '',
-          nextAction: '',
-          notes: '',
-          sourceUrl: '',
-          status: 'saved',
-          updatedAt,
-        }
-      })
-      return nextTracker
-    })
+    addScoutJobsToBasket(
+      parsedJobs,
+      `${parsedJobs.length} job advert${parsedJobs.length === 1 ? '' : 's'} added to the basket.`,
+    )
     setScoutJobInput('')
-    setScoutLastAction(`${parsedJobs.length} job advert${parsedJobs.length === 1 ? '' : 's'} added to the basket.`)
+  }
+
+  async function importScoutJobUrl() {
+    const url = scoutUrlInput.trim()
+
+    if (!url) {
+      setScoutUrlStatus({
+        message: 'Paste one full job advert URL to import.',
+        state: 'error',
+      })
+      return
+    }
+
+    setIsImportingScoutUrl(true)
+    setScoutUrlPreview(null)
+    setScoutUrlStatus({
+      message: 'Trying to read this advert. Some job sites block import, which is fine.',
+      state: 'warning',
+    })
+
+    try {
+      const response = await fetch('/api/import-job-url', {
+        body: JSON.stringify({ url }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+      })
+      const payload = (await response.json().catch(() => ({}))) as Partial<ScoutUrlPreview> & { error?: string }
+
+      if (!response.ok || typeof payload.text !== 'string' || typeof payload.title !== 'string') {
+        throw new Error(payload.error ?? 'This URL could not be imported. Paste the advert text instead.')
+      }
+
+      const preview = {
+        sourceUrl: typeof payload.sourceUrl === 'string' ? payload.sourceUrl : url,
+        text: payload.text,
+        title: payload.title,
+      }
+
+      setScoutUrlPreview(preview)
+      setScoutUrlStatus({
+        message: `${preview.title} imported. Review it before adding to the basket.`,
+        state: 'done',
+      })
+    } catch (error) {
+      setScoutUrlPreview(null)
+      setScoutUrlStatus({
+        message: error instanceof Error ? error.message : 'This URL could not be imported. Paste the advert text instead.',
+        state: 'error',
+      })
+    } finally {
+      setIsImportingScoutUrl(false)
+    }
+  }
+
+  function addScoutUrlPreviewToBasket() {
+    if (!scoutUrlPreview) return
+
+    const text = scoutUrlPreview.text.trim()
+    const title = scoutUrlPreview.title.trim() || 'Imported job advert'
+
+    if (text.length < 30) {
+      setScoutUrlStatus({
+        message: 'The imported advert is too short. Paste the full advert text instead.',
+        state: 'error',
+      })
+      return
+    }
+
+    addScoutJobsToBasket(
+      [
+        {
+          sourceUrl: scoutUrlPreview.sourceUrl,
+          text,
+          title,
+        },
+      ],
+      `${title} added to the basket from URL import.`,
+    )
+    setScoutUrlInput('')
+    setScoutUrlPreview(null)
+    setScoutUrlStatus({
+      message: `${title} added. Scout will rank it against the candidate profile.`,
+      state: 'done',
+    })
   }
 
   function removeScoutJob(jobId: string) {
@@ -2846,6 +2959,104 @@ function App() {
                     <span>Add jobs</span>
                   </button>
                 </div>
+              </div>
+              <div className="scout-url-import" aria-label="Job URL import">
+                <div className="scout-url-row">
+                  <label className="scout-field scout-url-field">
+                    <span>Import job URL</span>
+                    <input
+                      aria-label="Job advert URL"
+                      onChange={(event) => {
+                        setScoutUrlInput(event.target.value)
+                        if (scoutUrlStatus.state !== 'idle') setScoutUrlStatus(emptyImportStatus)
+                      }}
+                      placeholder="https://company.example/jobs/customer-support"
+                      type="url"
+                      value={scoutUrlInput}
+                    />
+                  </label>
+                  <button
+                    className="icon-button"
+                    disabled={!scoutUrlInput.trim() || isImportingScoutUrl}
+                    onClick={importScoutJobUrl}
+                    type="button"
+                  >
+                    <SearchCheck size={16} aria-hidden="true" />
+                    <span>{isImportingScoutUrl ? 'Importing...' : 'Import URL'}</span>
+                  </button>
+                </div>
+                {scoutUrlStatus.state !== 'idle' && (
+                  <div
+                    className={`import-status ${scoutUrlStatus.state}`}
+                    role={scoutUrlStatus.state === 'error' ? 'alert' : 'status'}
+                  >
+                    <span className={`status-light ${statusLightForImportStatus(scoutUrlStatus.state)}`} aria-hidden="true"></span>
+                    <span>{scoutUrlStatus.message}</span>
+                  </div>
+                )}
+                {scoutUrlPreview && (
+                  <div className="scout-url-preview">
+                    <div className="scout-url-preview-head">
+                      <div>
+                        <span className="section-kicker">Review imported advert</span>
+                        <strong>{scoutUrlPreview.text.length.toLocaleString()} characters extracted</strong>
+                      </div>
+                      <button
+                        className="icon-button"
+                        onClick={() => {
+                          setScoutUrlPreview(null)
+                          setScoutUrlStatus(emptyImportStatus)
+                        }}
+                        type="button"
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                        <span>Discard</span>
+                      </button>
+                    </div>
+                    <label className="scout-field">
+                      <span>Imported title</span>
+                      <input
+                        aria-label="Imported job title"
+                        onChange={(event) =>
+                          setScoutUrlPreview((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  title: event.target.value,
+                                }
+                              : current,
+                          )
+                        }
+                        value={scoutUrlPreview.title}
+                      />
+                    </label>
+                    <label className="scout-field scout-wide">
+                      <span>Imported advert text</span>
+                      <textarea
+                        aria-label="Imported job advert text"
+                        onChange={(event) =>
+                          setScoutUrlPreview((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  text: event.target.value,
+                                }
+                              : current,
+                          )
+                        }
+                        value={scoutUrlPreview.text}
+                      />
+                    </label>
+                    <div className="scout-url-source">
+                      <span>Source</span>
+                      <strong>{scoutUrlPreview.sourceUrl}</strong>
+                    </div>
+                    <button className="icon-button action-button" onClick={addScoutUrlPreviewToBasket} type="button">
+                      <Plus size={16} aria-hidden="true" />
+                      <span>Add imported job</span>
+                    </button>
+                  </div>
+                )}
               </div>
               <textarea
                 aria-label="Paste one or more job adverts"
