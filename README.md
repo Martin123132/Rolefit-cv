@@ -21,7 +21,8 @@ Rolefit Scout adds a worker-side agency assistant beside that flow:
 2. Paste job adverts into a local job basket.
 3. Rank each advert by honest proof fit.
 4. Show green, amber, red, and black suitability lights.
-5. Send a chosen advert into the existing Rolefit CV workflow.
+5. Track status, notes, and next action for each saved role.
+6. Send a chosen advert into the existing Rolefit CV workflow.
 
 The rule is the same in both modes: do not invent the person. Find work they can honestly prove, then help them show that proof clearly.
 
@@ -42,6 +43,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Honest job shortlist with green, amber, red, and black suitability.
 - Structured Scout reasons for mandatory proof, responsibilities, preferred extras, pay checks, work pattern, and warnings.
 - Scout warnings for missing mandatory proof, refused role types, unclear pay, agency-style listings, umbrella payroll, zero-hours terms, commission-only terms, and other bad-condition signals.
+- Local Scout application tracker with status, next action, notes, counts, and shortlist filters.
 - Handoff from a Scout job card into the existing one-job Rolefit CV workflow.
 - Provider selector for OpenAI, Claude, and Gemini.
 - Session-only bring-your-own-key field.
@@ -85,7 +87,7 @@ The comparison mode runs the selected provider against the local mock baseline a
 - Imported files are read client-side.
 - Imported text is not uploaded just by importing it.
 - DOCX/PDF imports extract plain text into the editor; the user still chooses when to run analysis.
-- Scout jobs, profile notes, and preferences stay in local draft storage on the user's machine.
+- Scout jobs, tracker notes, profile notes, and preferences stay in local draft storage on the user's machine.
 - Scout does not scrape job boards, contact employers, or auto-apply.
 - API keys are not saved in local draft storage.
 - Local draft storage can save CV text, job text, provider/model choice, and practice notes so the user does not lose work.
@@ -139,6 +141,7 @@ npm run build
 - Scanned or image-only PDFs are not OCR processed yet.
 - Scout Mode only ranks jobs the user pastes in. Live job search and deduplication are planned separately.
 - Scout matching is a local first-pass signal, not a legal, financial, or employment guarantee.
+- Scout tracker data is local-only and does not include reminders, notifications, accounts, or sync yet.
 - Live provider support is still early and needs prompt-quality evaluation before wider use.
 - The app is local-first; hosted deployment and account systems are not part of this stage.
 - The analysis is a production foundation, not a final career-advice guarantee.
@@ -148,7 +151,7 @@ npm run build
 Planned next slices:
 
 - Improve Scout matching with more real-world advert examples and user feedback.
-- Add saved application tracker states for shortlisted jobs.
+- Improve tracker reminders, history, and export.
 - OCR support for scanned PDFs.
 - Job URL import for readable adverts.
 - Full all-provider comparison once per-provider session keys are available.

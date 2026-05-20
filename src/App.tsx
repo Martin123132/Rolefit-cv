@@ -124,6 +124,7 @@ type SavedDraft = {
   scoutQualifications: string
   scoutRefusedRoles: string
   scoutSalaryFloor: string
+  scoutTracker: ScoutTrackerState
   scoutTravelRadius: string
   scoutWorkPreference: ScoutWorkPreference
   selectedQuestion: number
@@ -166,6 +167,19 @@ type ComparisonCandidate = {
   run: ProviderRunResult<Analysis>
 }
 
+type ScoutTrackerStatus = 'saved' | 'interested' | 'applied' | 'interview' | 'offer' | 'rejected' | 'archived'
+
+type ScoutTrackerFilter = 'all' | 'active' | 'applied' | 'interview' | 'archived'
+
+type ScoutTrackerEntry = {
+  nextAction: string
+  notes: string
+  status: ScoutTrackerStatus
+  updatedAt: string
+}
+
+type ScoutTrackerState = Record<string, ScoutTrackerEntry>
+
 const providers: Array<{ id: ProviderId; label: string; note: string }> = [
   { id: 'mock', label: 'Local mock', note: 'No request sent' },
   { id: 'openai', label: 'OpenAI', note: 'Bring your key' },
@@ -197,6 +211,34 @@ const modelOptions: Record<ProviderId, string[]> = {
   openai: ['gpt-5.2', 'gpt-5', 'gpt-4o-mini'],
   claude: ['claude-sonnet-4-5', 'claude-opus-4-1-20250805', 'claude-sonnet-4-20250514'],
   gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-pro-preview'],
+}
+
+const scoutTrackerStatuses: Array<{ id: ScoutTrackerStatus; label: string }> = [
+  { id: 'saved', label: 'Saved' },
+  { id: 'interested', label: 'Interested' },
+  { id: 'applied', label: 'Applied' },
+  { id: 'interview', label: 'Interview' },
+  { id: 'offer', label: 'Offer' },
+  { id: 'rejected', label: 'Rejected' },
+  { id: 'archived', label: 'Archived' },
+]
+
+const scoutTrackerFilters: Array<{ id: ScoutTrackerFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'active', label: 'Active' },
+  { id: 'applied', label: 'Applied' },
+  { id: 'interview', label: 'Interview' },
+  { id: 'archived', label: 'Archived' },
+]
+
+const scoutTrackerStatusRank: Record<ScoutTrackerStatus, number> = {
+  interested: 0,
+  applied: 1,
+  interview: 2,
+  offer: 3,
+  saved: 4,
+  rejected: 5,
+  archived: 6,
 }
 
 const customModelOption = '__rolefit-custom-model__'
@@ -382,6 +424,42 @@ function isScoutWorkPreference(value: unknown): value is ScoutWorkPreference {
   return scoutWorkPreferenceOptions.some((option) => option.id === value)
 }
 
+function isScoutTrackerStatus(value: unknown): value is ScoutTrackerStatus {
+  return scoutTrackerStatuses.some((status) => status.id === value)
+}
+
+function isActiveScoutTrackerStatus(status: ScoutTrackerStatus) {
+  return status !== 'rejected' && status !== 'archived'
+}
+
+function defaultScoutTrackerEntry(): ScoutTrackerEntry {
+  return {
+    nextAction: '',
+    notes: '',
+    status: 'saved',
+    updatedAt: '',
+  }
+}
+
+function readSavedScoutTracker(value: unknown): ScoutTrackerState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+
+  return Object.entries(value as Record<string, unknown>).reduce<ScoutTrackerState>((entries, [jobId, item]) => {
+    if (!jobId.trim() || !item || typeof item !== 'object' || Array.isArray(item)) return entries
+
+    const candidate = item as Partial<ScoutTrackerEntry>
+    const status = isScoutTrackerStatus(candidate.status) ? candidate.status : 'saved'
+    entries[jobId] = {
+      nextAction: typeof candidate.nextAction === 'string' ? candidate.nextAction : '',
+      notes: typeof candidate.notes === 'string' ? candidate.notes : '',
+      status,
+      updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : '',
+    }
+
+    return entries
+  }, {})
+}
+
 function readSavedScoutJobs(value: unknown): ScoutJob[] {
   if (!Array.isArray(value)) return []
 
@@ -397,6 +475,45 @@ function readSavedScoutJobs(value: unknown): ScoutJob[] {
       return text ? { id, text, title } : null
     })
     .filter((item): item is ScoutJob => Boolean(item))
+}
+
+function scoutTrackerVisibleForFilter(status: ScoutTrackerStatus, filter: ScoutTrackerFilter) {
+  if (filter === 'all') return true
+  if (filter === 'active') return isActiveScoutTrackerStatus(status)
+  if (filter === 'archived') return status === 'archived' || status === 'rejected'
+  return status === filter
+}
+
+function scoutTrackerUpdatedLabel(updatedAt: string) {
+  if (!updatedAt) return 'Not updated yet'
+
+  const timestamp = Date.parse(updatedAt)
+  if (Number.isNaN(timestamp)) return 'Updated recently'
+
+  return `Updated ${new Date(timestamp).toLocaleDateString([], {
+    day: 'numeric',
+    month: 'short',
+  })}`
+}
+
+function scoutTrackerSortValue(updatedAt: string) {
+  const timestamp = Date.parse(updatedAt)
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+function compareScoutTrackerEntries(left: ScoutTrackerEntry, right: ScoutTrackerEntry) {
+  const leftActive = isActiveScoutTrackerStatus(left.status)
+  const rightActive = isActiveScoutTrackerStatus(right.status)
+
+  if (leftActive !== rightActive) return leftActive ? -1 : 1
+
+  const updatedAt = scoutTrackerSortValue(right.updatedAt) - scoutTrackerSortValue(left.updatedAt)
+  if (updatedAt !== 0) return updatedAt
+
+  const statusRank = scoutTrackerStatusRank[left.status] - scoutTrackerStatusRank[right.status]
+  if (statusRank !== 0) return statusRank
+
+  return 0
 }
 
 function evidenceReviewKeyFor(
@@ -449,6 +566,7 @@ function loadSavedDraft(): Partial<SavedDraft> {
       scoutQualifications: typeof parsed.scoutQualifications === 'string' ? parsed.scoutQualifications : undefined,
       scoutRefusedRoles: typeof parsed.scoutRefusedRoles === 'string' ? parsed.scoutRefusedRoles : undefined,
       scoutSalaryFloor: typeof parsed.scoutSalaryFloor === 'string' ? parsed.scoutSalaryFloor : undefined,
+      scoutTracker: readSavedScoutTracker(parsed.scoutTracker),
       scoutTravelRadius: typeof parsed.scoutTravelRadius === 'string' ? parsed.scoutTravelRadius : undefined,
       scoutWorkPreference: isScoutWorkPreference(parsed.scoutWorkPreference) ? parsed.scoutWorkPreference : undefined,
       selectedQuestion: typeof parsed.selectedQuestion === 'number' ? Math.max(0, parsed.selectedQuestion) : undefined,
@@ -1286,6 +1404,8 @@ function App() {
   )
   const [scoutRefusedRoles, setScoutRefusedRoles] = useState(savedDraft.scoutRefusedRoles ?? '')
   const [scoutJobs, setScoutJobs] = useState<ScoutJob[]>(savedDraft.scoutJobs ?? [])
+  const [scoutTracker, setScoutTracker] = useState<ScoutTrackerState>(savedDraft.scoutTracker ?? {})
+  const [scoutTrackerFilter, setScoutTrackerFilter] = useState<ScoutTrackerFilter>('active')
   const [scoutJobInput, setScoutJobInput] = useState('')
   const [scoutLastAction, setScoutLastAction] = useState('Paste job adverts into the basket to build a shortlist.')
   const [evidenceChoices, setEvidenceChoices] = useState<Record<string, EvidenceReviewChoice>>({})
@@ -1348,6 +1468,43 @@ function App() {
     ],
   )
   const scoutMatches = useMemo(() => buildScoutMatches(scoutProfile, scoutJobs), [scoutJobs, scoutProfile])
+  const scoutTrackedMatches = useMemo(
+    () =>
+      scoutMatches
+        .map((match) => ({
+          match,
+          tracker: scoutTracker[match.job.id] ?? defaultScoutTrackerEntry(),
+        }))
+        .filter(({ tracker }) => scoutTrackerVisibleForFilter(tracker.status, scoutTrackerFilter))
+        .sort((left, right) => compareScoutTrackerEntries(left.tracker, right.tracker)),
+    [scoutMatches, scoutTracker, scoutTrackerFilter],
+  )
+  const scoutTrackerCounts = useMemo(() => {
+    const counts = scoutTrackerStatuses.reduce(
+      (nextCounts, status) => ({
+        ...nextCounts,
+        [status.id]: 0,
+      }),
+      {} as Record<ScoutTrackerStatus, number>,
+    )
+
+    scoutJobs.forEach((job) => {
+      const status = scoutTracker[job.id]?.status ?? 'saved'
+      counts[status] += 1
+    })
+
+    return counts
+  }, [scoutJobs, scoutTracker])
+  const scoutTrackerFilterCounts = useMemo(
+    () => ({
+      active: scoutJobs.filter((job) => isActiveScoutTrackerStatus(scoutTracker[job.id]?.status ?? 'saved')).length,
+      all: scoutJobs.length,
+      applied: scoutTrackerCounts.applied,
+      archived: scoutTrackerCounts.archived + scoutTrackerCounts.rejected,
+      interview: scoutTrackerCounts.interview,
+    }),
+    [scoutJobs, scoutTracker, scoutTrackerCounts],
+  )
   const scoutProfileHasDetails =
     scoutDescription.trim().length > 0 ||
     scoutQualifications.trim().length > 0 ||
@@ -1680,6 +1837,7 @@ function App() {
       scoutQualifications,
       scoutRefusedRoles,
       scoutSalaryFloor,
+      scoutTracker,
       scoutTravelRadius,
       scoutWorkPreference,
       selectedQuestion: selectedQuestionIndex,
@@ -1700,6 +1858,7 @@ function App() {
     scoutQualifications,
     scoutRefusedRoles,
     scoutSalaryFloor,
+    scoutTracker,
     scoutTravelRadius,
     scoutWorkPreference,
     selectedModel,
@@ -2102,18 +2261,49 @@ function App() {
     }))
 
     setScoutJobs((current) => [...nextJobs, ...current])
+    setScoutTracker((current) => {
+      const updatedAt = new Date().toISOString()
+      const nextTracker = { ...current }
+      nextJobs.forEach((job) => {
+        nextTracker[job.id] = {
+          nextAction: '',
+          notes: '',
+          status: 'saved',
+          updatedAt,
+        }
+      })
+      return nextTracker
+    })
     setScoutJobInput('')
     setScoutLastAction(`${parsedJobs.length} job advert${parsedJobs.length === 1 ? '' : 's'} added to the basket.`)
   }
 
   function removeScoutJob(jobId: string) {
     setScoutJobs((current) => current.filter((job) => job.id !== jobId))
+    setScoutTracker((current) => {
+      const nextTracker = { ...current }
+      delete nextTracker[jobId]
+      return nextTracker
+    })
     setScoutLastAction('Job removed from the basket.')
   }
 
   function clearScoutJobs() {
     setScoutJobs([])
+    setScoutTracker({})
     setScoutLastAction('Job basket cleared.')
+  }
+
+  function updateScoutTracker(jobId: string, updates: Partial<Omit<ScoutTrackerEntry, 'updatedAt'>>) {
+    setScoutTracker((current) => ({
+      ...current,
+      [jobId]: {
+        ...defaultScoutTrackerEntry(),
+        ...current[jobId],
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      },
+    }))
   }
 
   function sendScoutJobToRolefit(job: ScoutJob) {
@@ -2518,17 +2708,51 @@ function App() {
                   <span className="section-kicker">Honest shortlist</span>
                   <h2>Jobs ranked by proof fit</h2>
                 </div>
-                <span className="comparison-summary-pill">{scoutMatches.length} ranked</span>
+                <span className="comparison-summary-pill">
+                  {scoutMatches.length === 0 ? '0 ranked' : `${scoutTrackedMatches.length} shown`}
+                </span>
               </div>
+              {scoutJobs.length > 0 && (
+                <div className="scout-tracker-summary" aria-label="Application tracker summary">
+                  <div className="scout-tracker-counts">
+                    {scoutTrackerStatuses.map((status) => (
+                      <div className="scout-tracker-count" key={status.id}>
+                        <span>{status.label}</span>
+                        <strong>{scoutTrackerCounts[status.id]}</strong>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="scout-filter-row" role="group" aria-label="Tracker filters">
+                    {scoutTrackerFilters.map((filter) => (
+                      <button
+                        aria-pressed={scoutTrackerFilter === filter.id}
+                        className={`scout-filter-button ${scoutTrackerFilter === filter.id ? 'active' : ''}`}
+                        key={filter.id}
+                        onClick={() => setScoutTrackerFilter(filter.id)}
+                        type="button"
+                      >
+                        <span>{filter.label}</span>
+                        <strong>{scoutTrackerFilterCounts[filter.id]}</strong>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {scoutMatches.length === 0 ? (
                 <LockedPanel
                   action={hasCv ? 'Add job adverts to the basket.' : 'Add CV proof first.'}
                   message="Scout needs real CV evidence and real job adverts before it can say green, amber, red, or black."
                   title="Shortlist is locked"
                 />
+              ) : scoutTrackedMatches.length === 0 ? (
+                <div className="scout-filter-empty">
+                  <span className="section-kicker">Tracker filter</span>
+                  <strong>No jobs in this view</strong>
+                  <p>Choose All or Active to bring the hidden applications back into the shortlist.</p>
+                </div>
               ) : (
                 <div className="scout-match-list">
-                  {scoutMatches.map((match) => {
+                  {scoutTrackedMatches.map(({ match, tracker }) => {
                     const light = scoutLightFor(match.status)
                     return (
                       <article className={`scout-match-card ${match.status}`} key={match.job.id}>
@@ -2607,6 +2831,59 @@ function App() {
                               </div>
                             </section>
                           ))}
+                        </div>
+                        <div className="scout-tracker-card" aria-label={`${match.job.title} application tracker`}>
+                          <div className="scout-tracker-head">
+                            <span className="section-kicker">Application tracker</span>
+                            <span>{scoutTrackerUpdatedLabel(tracker.updatedAt)}</span>
+                          </div>
+                          <div className="scout-tracker-grid">
+                            <label className="scout-tracker-field">
+                              <span>Status</span>
+                              <select
+                                aria-label={`${match.job.title} tracker status`}
+                                onChange={(event) =>
+                                  updateScoutTracker(match.job.id, {
+                                    status: event.target.value as ScoutTrackerStatus,
+                                  })
+                                }
+                                value={tracker.status}
+                              >
+                                {scoutTrackerStatuses.map((status) => (
+                                  <option key={status.id} value={status.id}>
+                                    {status.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="scout-tracker-field">
+                              <span>Next action</span>
+                              <input
+                                aria-label={`${match.job.title} next action`}
+                                onChange={(event) =>
+                                  updateScoutTracker(match.job.id, {
+                                    nextAction: event.target.value,
+                                  })
+                                }
+                                placeholder="Tailor CV, call employer, follow up Friday"
+                                type="text"
+                                value={tracker.nextAction}
+                              />
+                            </label>
+                            <label className="scout-tracker-field scout-tracker-notes">
+                              <span>Notes</span>
+                              <textarea
+                                aria-label={`${match.job.title} application notes`}
+                                onChange={(event) =>
+                                  updateScoutTracker(match.job.id, {
+                                    notes: event.target.value,
+                                  })
+                                }
+                                placeholder="Contact, pay questions, evidence to highlight, or why this role is worth applying for."
+                                value={tracker.notes}
+                              />
+                            </label>
+                          </div>
                         </div>
                         <div className="scout-questions">
                           <span className="section-kicker">Questions to ask</span>
