@@ -1237,6 +1237,90 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.scout-history-card {
+  background: #fbfcfb;
+  border: 1px solid #e2ebe7;
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.scout-history-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.scout-history-head strong {
+  display: block;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.scout-history-note-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.scout-history-note-row input {
+  background: #ffffff;
+  border: 1px solid #dce8e3;
+  border-radius: 7px;
+  color: var(--ink);
+  min-height: 38px;
+  outline: none;
+  padding: 0 10px;
+}
+
+.scout-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.scout-history-item {
+  align-items: start;
+  background: #ffffff;
+  border: 1px solid #e2ebe7;
+  border-radius: 7px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 78px 1fr;
+  padding: 8px;
+}
+
+.scout-history-type {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 780;
+  text-transform: uppercase;
+}
+
+.scout-history-item p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+
+.scout-history-item strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.scout-history-item p span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scout-history-empty {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
 .chip.scout-warning {
   background: #fff0ef;
   color: #96362f;
@@ -2632,6 +2716,8 @@ textarea {
   .pack-grid,
   .review-controls,
   .scout-basket-card,
+  .scout-history-item,
+  .scout-history-note-row,
   .scout-metrics,
   .scout-strength-grid,
   .scout-tracker-grid {

@@ -46,7 +46,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Honest job shortlist with green, amber, red, and black suitability.
 - Structured Scout reasons for mandatory proof, responsibilities, preferred extras, pay checks, work pattern, and warnings.
 - Scout warnings for missing mandatory proof, refused role types, unclear pay, agency-style listings, umbrella payroll, zero-hours terms, commission-only terms, and other bad-condition signals.
-- Local Scout application tracker with status, follow-up lights, employer/contact/source fields, next action, notes, counts, and shortlist filters.
+- Local Scout application tracker with status, follow-up lights, employer/contact/source fields, next action, notes, timeline history, counts, and shortlist filters.
 - Markdown and CSV export for the local Scout tracker.
 - Handoff from a Scout job card into the existing one-job Rolefit CV workflow.
 - Provider selector for OpenAI, Claude, and Gemini.
@@ -91,7 +91,7 @@ The comparison mode runs the selected provider against the local mock baseline a
 - Imported files are read client-side.
 - Imported text is not uploaded just by importing it.
 - DOCX/PDF imports extract plain text into the editor; the user still chooses when to run analysis.
-- Scout jobs, strengths, tracker notes, follow-up dates, contact/source fields, profile notes, and preferences stay in local draft storage on the user's machine.
+- Scout jobs, strengths, tracker notes, timeline history, follow-up dates, contact/source fields, profile notes, and preferences stay in local draft storage on the user's machine.
 - Scout only uses confirmed strength cards as extra matching evidence; suggested and hidden cards stay out of ranking.
 - Scout tracker exports are local browser downloads.
 - Scout URL import extracts readable text through the local app server and stores only the reviewed advert text and optional source URL.
@@ -165,7 +165,7 @@ Planned next slices:
 - Better job URL extraction and deduplication.
 - Full all-provider comparison once per-provider session keys are available.
 - More interview modes, including follow-up questions.
-- Saved application history.
+- Better long-term tracker review and optional reminders.
 - Cleaner packaged desktop/local release.
 
 ## Project Direction
