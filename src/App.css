@@ -748,6 +748,74 @@ textarea {
   min-height: 138px;
 }
 
+.scout-strength-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scout-strength-card {
+  background: #fbfcfb;
+  border: 1px solid #e0e8e5;
+  border-radius: 8px;
+  display: grid;
+  gap: 11px;
+  padding: 11px;
+}
+
+.scout-strength-card.confirmed {
+  background: #eff9f3;
+  border-color: #ccebd7;
+}
+
+.scout-strength-card.suggested {
+  background: #fffdf6;
+  border-color: #f2cb77;
+}
+
+.scout-strength-card.hidden {
+  background: #f7f8f7;
+  border-color: #d5dcda;
+  color: var(--muted-strong);
+}
+
+.scout-strength-head {
+  align-items: start;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.scout-strength-head strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.25;
+  margin-top: 2px;
+  text-transform: capitalize;
+}
+
+.scout-strength-source {
+  align-items: center;
+  color: var(--muted-strong);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 760;
+  gap: 7px;
+  min-height: 28px;
+}
+
+.scout-strength-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 0.55fr) minmax(0, 1fr);
+}
+
+.scout-strength-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .scout-url-import {
   background: #fbfcfb;
   border: 1px solid #e0e8e5;
@@ -2565,6 +2633,7 @@ textarea {
   .review-controls,
   .scout-basket-card,
   .scout-metrics,
+  .scout-strength-grid,
   .scout-tracker-grid {
     grid-template-columns: 1fr;
   }
@@ -2584,6 +2653,10 @@ textarea {
   .comparison-pills,
   .scout-tracker-actions {
     justify-content: stretch;
+  }
+
+  .scout-strength-head {
+    flex-direction: column;
   }
 
   .scout-filter-button {

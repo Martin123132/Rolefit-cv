@@ -18,11 +18,12 @@ Rolefit helps a user move through one application at a time:
 Rolefit Scout adds a worker-side agency assistant beside that flow:
 
 1. Add the person's CV proof, self-description, limits, and preferences.
-2. Paste job adverts into a local job basket, or import a readable job advert URL.
-3. Rank each advert by honest proof fit.
-4. Show green, amber, red, and black suitability lights.
-5. Track status, follow-up date, contact details, source, notes, and next action for each saved role.
-6. Send a chosen advert into the existing Rolefit CV workflow.
+2. Confirm a local strengths bank so reusable proof is owned by the user.
+3. Paste job adverts into a local job basket, or import a readable job advert URL.
+4. Rank each advert by honest proof fit.
+5. Show green, amber, red, and black suitability lights.
+6. Track status, follow-up date, contact details, source, notes, and next action for each saved role.
+7. Send a chosen advert into the existing Rolefit CV workflow.
 
 The rule is the same in both modes: do not invent the person. Find work they can honestly prove, then help them show that proof clearly.
 
@@ -40,6 +41,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - `.txt`, `.md`, `.markdown`, `.docx`, and readable `.pdf` import for CV and job inputs.
 - Local mock analysis that works without an API key.
 - Scout Mode for building a local candidate profile and job basket.
+- Editable Scout strengths bank with local suggestions, confirmed proof cards, hidden cards, and manual strengths.
 - Best-effort Scout job URL import with review-before-add and paste fallback for blocked sites.
 - Honest job shortlist with green, amber, red, and black suitability.
 - Structured Scout reasons for mandatory proof, responsibilities, preferred extras, pay checks, work pattern, and warnings.
@@ -89,7 +91,8 @@ The comparison mode runs the selected provider against the local mock baseline a
 - Imported files are read client-side.
 - Imported text is not uploaded just by importing it.
 - DOCX/PDF imports extract plain text into the editor; the user still chooses when to run analysis.
-- Scout jobs, tracker notes, follow-up dates, contact/source fields, profile notes, and preferences stay in local draft storage on the user's machine.
+- Scout jobs, strengths, tracker notes, follow-up dates, contact/source fields, profile notes, and preferences stay in local draft storage on the user's machine.
+- Scout only uses confirmed strength cards as extra matching evidence; suggested and hidden cards stay out of ranking.
 - Scout tracker exports are local browser downloads.
 - Scout URL import extracts readable text through the local app server and stores only the reviewed advert text and optional source URL.
 - Scout does not search job boards, scrape batches, contact employers, or auto-apply.

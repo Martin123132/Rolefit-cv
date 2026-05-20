@@ -39,11 +39,16 @@ import {
 } from './importers/documentText'
 import {
   buildScoutMatches,
+  buildScoutStrengthSuggestions,
+  confirmedScoutStrengthEvidence,
+  normaliseScoutStrengths,
   parseScoutJobAdverts,
   type ScoutJob,
   type ScoutMatch,
   type ScoutMatchStatus,
   type ScoutProfile,
+  type ScoutStrength,
+  type ScoutStrengthStatus,
   type ScoutWorkPreference,
 } from './scout/scoutEngine'
 import './App.css'
@@ -125,6 +130,7 @@ type SavedDraft = {
   scoutQualifications: string
   scoutRefusedRoles: string
   scoutSalaryFloor: string
+  scoutStrengths: ScoutStrength[]
   scoutTracker: ScoutTrackerState
   scoutTravelRadius: string
   scoutWorkPreference: ScoutWorkPreference
@@ -265,6 +271,12 @@ const scoutTrackerDueLabels: Record<ScoutTrackerDueState, string> = {
   future: 'Follow-up set',
   none: 'No follow-up date',
   overdue: 'Overdue',
+}
+
+const scoutStrengthStatusLabels: Record<ScoutStrengthStatus, string> = {
+  confirmed: 'Confirmed',
+  hidden: 'Hidden',
+  suggested: 'Suggested',
 }
 
 const customModelOption = '__rolefit-custom-model__'
@@ -739,6 +751,7 @@ function loadSavedDraft(): Partial<SavedDraft> {
       scoutQualifications: typeof parsed.scoutQualifications === 'string' ? parsed.scoutQualifications : undefined,
       scoutRefusedRoles: typeof parsed.scoutRefusedRoles === 'string' ? parsed.scoutRefusedRoles : undefined,
       scoutSalaryFloor: typeof parsed.scoutSalaryFloor === 'string' ? parsed.scoutSalaryFloor : undefined,
+      scoutStrengths: normaliseScoutStrengths(parsed.scoutStrengths),
       scoutTracker: readSavedScoutTracker(parsed.scoutTracker),
       scoutTravelRadius: typeof parsed.scoutTravelRadius === 'string' ? parsed.scoutTravelRadius : undefined,
       scoutWorkPreference: isScoutWorkPreference(parsed.scoutWorkPreference) ? parsed.scoutWorkPreference : undefined,
@@ -1575,6 +1588,7 @@ function App() {
     savedDraft.scoutPreferredRoles ?? 'customer support, operations, customer success',
   )
   const [scoutRefusedRoles, setScoutRefusedRoles] = useState(savedDraft.scoutRefusedRoles ?? '')
+  const [scoutStrengths, setScoutStrengths] = useState<ScoutStrength[]>(savedDraft.scoutStrengths ?? [])
   const [scoutJobs, setScoutJobs] = useState<ScoutJob[]>(savedDraft.scoutJobs ?? [])
   const [scoutTracker, setScoutTracker] = useState<ScoutTrackerState>(savedDraft.scoutTracker ?? {})
   const [scoutTrackerFilter, setScoutTrackerFilter] = useState<ScoutTrackerFilter>('active')
@@ -1619,7 +1633,7 @@ function App() {
   const currentComparisonCandidates =
     comparisonReady && comparisonRunKey === comparisonKey ? comparisonCandidates : []
   const hasCurrentComparison = currentComparisonCandidates.length > 0
-  const scoutProfile = useMemo<ScoutProfile>(
+  const scoutProfileBase = useMemo<ScoutProfile>(
     () => ({
       cvText,
       location: scoutLocation,
@@ -1642,6 +1656,35 @@ function App() {
       scoutTravelRadius,
       scoutWorkPreference,
     ],
+  )
+  const scoutStrengthSuggestions = useMemo(
+    () => buildScoutStrengthSuggestions(scoutProfileBase),
+    [scoutProfileBase],
+  )
+  const scoutStrengthCards = useMemo(() => {
+    const savedIds = new Set(scoutStrengths.map((strength) => strength.id))
+    const savedLabels = new Set(scoutStrengths.map((strength) => strength.label.trim().toLowerCase()).filter(Boolean))
+    const freshSuggestions = scoutStrengthSuggestions.filter(
+      (strength) => !savedIds.has(strength.id) && !savedLabels.has(strength.label.trim().toLowerCase()),
+    )
+
+    return [...scoutStrengths, ...freshSuggestions]
+  }, [scoutStrengthSuggestions, scoutStrengths])
+  const confirmedStrengthCount = scoutStrengthCards.filter(
+    (strength) => strength.status === 'confirmed' && strength.label.trim() && strength.proof.trim(),
+  ).length
+  const suggestedStrengthCount = scoutStrengthCards.filter((strength) => strength.status === 'suggested').length
+  const hiddenStrengthCount = scoutStrengthCards.filter((strength) => strength.status === 'hidden').length
+  const confirmedStrengthEvidence = useMemo(
+    () => confirmedScoutStrengthEvidence(scoutStrengths),
+    [scoutStrengths],
+  )
+  const scoutProfile = useMemo<ScoutProfile>(
+    () => ({
+      ...scoutProfileBase,
+      confirmedStrengthsText: confirmedStrengthEvidence,
+    }),
+    [confirmedStrengthEvidence, scoutProfileBase],
   )
   const scoutMatches = useMemo(() => buildScoutMatches(scoutProfile, scoutJobs), [scoutJobs, scoutProfile])
   const scoutToday = localDateValue()
@@ -1691,6 +1734,10 @@ function App() {
     scoutLocation.trim().length > 0 ||
     scoutPreferredRoles.trim().length > 0
   const scoutProfileStatus: StepStatus = hasCv && scoutProfileHasDetails ? 'done' : hasCv ? 'next' : 'blocked'
+  const scoutHasStrengthSource =
+    hasCv || scoutDescription.trim().length > 0 || scoutQualifications.trim().length > 0
+  const scoutStrengthStatus: StepStatus =
+    confirmedStrengthCount > 0 ? 'done' : scoutHasStrengthSource ? 'next' : 'blocked'
   const scoutBasketStatus: StepStatus = scoutJobs.length > 0 ? 'done' : hasCv ? 'next' : 'blocked'
   const scoutShortlistStatus: StepStatus = scoutJobs.length > 0 ? 'done' : 'blocked'
   const scoutGuidance =
@@ -1706,6 +1753,15 @@ function App() {
             status: 'next' as StepStatus,
             title: 'Describe the person',
           }
+        : scoutStrengthStatus === 'next'
+          ? {
+              detail:
+                suggestedStrengthCount > 0
+                  ? 'Confirm the proof cards the person can honestly stand behind.'
+                  : 'Add one real strength with proof before relying on Scout ranking.',
+              status: 'next' as StepStatus,
+              title: 'Review strengths',
+            }
         : scoutBasketStatus === 'next'
           ? {
               detail: 'Paste one or more job adverts. Use dividers when adding several.',
@@ -2017,6 +2073,7 @@ function App() {
       scoutQualifications,
       scoutRefusedRoles,
       scoutSalaryFloor,
+      scoutStrengths,
       scoutTracker,
       scoutTravelRadius,
       scoutWorkPreference,
@@ -2038,6 +2095,7 @@ function App() {
     scoutQualifications,
     scoutRefusedRoles,
     scoutSalaryFloor,
+    scoutStrengths,
     scoutTracker,
     scoutTravelRadius,
     scoutWorkPreference,
@@ -2426,6 +2484,45 @@ function App() {
     return 'black'
   }
 
+  function scoutStrengthLightFor(status: ScoutStrengthStatus) {
+    if (status === 'confirmed') return 'done'
+    if (status === 'suggested') return 'next'
+    return 'idle'
+  }
+
+  function updateScoutStrength(
+    strength: ScoutStrength,
+    updates: Partial<Omit<ScoutStrength, 'id' | 'updatedAt'>>,
+  ) {
+    setScoutStrengths((current) => {
+      const updatedAt = new Date().toISOString()
+      const nextStrength: ScoutStrength = {
+        ...strength,
+        ...updates,
+        updatedAt,
+      }
+      const existingIndex = current.findIndex((item) => item.id === strength.id)
+
+      if (existingIndex === -1) return [nextStrength, ...current]
+
+      return current.map((item, index) => (index === existingIndex ? nextStrength : item))
+    })
+  }
+
+  function addManualScoutStrength() {
+    const createdAt = Date.now()
+    const newStrength: ScoutStrength = {
+      id: `manual-strength-${createdAt}`,
+      label: '',
+      proof: '',
+      source: 'User added',
+      status: 'suggested',
+      updatedAt: new Date(createdAt).toISOString(),
+    }
+
+    setScoutStrengths((current) => [newStrength, ...current])
+  }
+
   function addScoutJobsToBasket(
     jobs: Array<{ sourceUrl?: string; text: string; title: string }>,
     message: string,
@@ -2801,6 +2898,15 @@ function App() {
                 title: 'Candidate proof',
               },
               {
+                description:
+                  confirmedStrengthCount > 0
+                    ? `${confirmedStrengthCount} confirmed`
+                    : `${suggestedStrengthCount} to review`,
+                icon: Brain,
+                status: scoutStrengthStatus,
+                title: 'Strengths bank',
+              },
+              {
                 description: `${scoutJobs.length} saved advert${scoutJobs.length === 1 ? '' : 's'}`,
                 icon: BriefcaseBusiness,
                 status: scoutBasketStatus,
@@ -2941,6 +3047,139 @@ function App() {
                   />
                 </label>
               </div>
+            </section>
+
+            <section className="scout-panel scout-strengths-panel" aria-label="Strengths bank">
+              <div className="section-head">
+                <div>
+                  <span className="section-kicker">Strengths bank</span>
+                  <h2>Proof this person can reuse</h2>
+                </div>
+                <div className="analysis-actions">
+                  <span className={`scout-step-pill ${scoutStrengthStatus}`}>
+                    <span className={`status-light ${scoutStrengthStatus}`} aria-hidden="true"></span>
+                    {statusLabels[scoutStrengthStatus]}
+                  </span>
+                  <button className="icon-button" onClick={addManualScoutStrength} type="button">
+                    <Plus size={16} aria-hidden="true" />
+                    <span>Add strength</span>
+                  </button>
+                </div>
+              </div>
+              <div className={`review-progress ${scoutStrengthStatus}`}>
+                <span className={`status-light ${scoutStrengthStatus}`} aria-hidden="true"></span>
+                <div>
+                  <strong>{confirmedStrengthCount} confirmed strength{confirmedStrengthCount === 1 ? '' : 's'}</strong>
+                  <span>
+                    {suggestedStrengthCount > 0
+                      ? `${suggestedStrengthCount} suggestion${suggestedStrengthCount === 1 ? '' : 's'} need review.`
+                      : hiddenStrengthCount > 0
+                        ? `${hiddenStrengthCount} hidden card${hiddenStrengthCount === 1 ? '' : 's'} kept out of matching.`
+                        : scoutStrengthStatus === 'blocked'
+                          ? 'Add CV proof or profile notes to start.'
+                          : 'Add a proof card to strengthen Scout matching.'}
+                  </span>
+                </div>
+              </div>
+              {scoutStrengthCards.length === 0 ? (
+                <LockedPanel
+                  action="Add CV proof, self-description, qualifications, or a manual strength."
+                  message="Scout only uses strength cards after the person confirms the proof."
+                  title="Strengths are empty"
+                />
+              ) : (
+                <div className="scout-strength-list">
+                  {scoutStrengthCards.map((strength) => {
+                    const strengthName = strength.label.trim() || 'Untitled strength'
+                    const canConfirm = strength.label.trim().length > 0 && strength.proof.trim().length > 0
+
+                    return (
+                      <article className={`scout-strength-card ${strength.status}`} key={strength.id}>
+                        <div className="scout-strength-head">
+                          <div>
+                            <span className="section-kicker">{scoutStrengthStatusLabels[strength.status]}</span>
+                            <strong>{strengthName}</strong>
+                          </div>
+                          <span className="scout-strength-source">
+                            <span className={`status-light ${scoutStrengthLightFor(strength.status)}`} aria-hidden="true"></span>
+                            {strength.source || 'Strengths bank'}
+                          </span>
+                        </div>
+                        <div className="scout-strength-grid">
+                          <label className="scout-field">
+                            <span>Strength</span>
+                            <input
+                              aria-label={`${strengthName} strength label`}
+                              onChange={(event) =>
+                                updateScoutStrength(strength, {
+                                  label: event.target.value,
+                                })
+                              }
+                              placeholder="e.g. customer service"
+                              value={strength.label}
+                            />
+                          </label>
+                          <label className="scout-field scout-wide">
+                            <span>Proof</span>
+                            <textarea
+                              aria-label={`${strengthName} proof`}
+                              onChange={(event) =>
+                                updateScoutStrength(strength, {
+                                  proof: event.target.value,
+                                })
+                              }
+                              placeholder="One real example the person can explain in an interview."
+                              value={strength.proof}
+                            />
+                          </label>
+                        </div>
+                        <div className="scout-strength-actions">
+                          <button
+                            className="icon-button action-button"
+                            disabled={!canConfirm}
+                            onClick={() =>
+                              updateScoutStrength(strength, {
+                                status: 'confirmed',
+                              })
+                            }
+                            type="button"
+                          >
+                            <Check size={16} aria-hidden="true" />
+                            <span>{strength.status === 'confirmed' ? 'Confirmed' : 'Confirm proof'}</span>
+                          </button>
+                          {strength.status === 'hidden' ? (
+                            <button
+                              className="icon-button"
+                              onClick={() =>
+                                updateScoutStrength(strength, {
+                                  status: 'suggested',
+                                })
+                              }
+                              type="button"
+                            >
+                              <RefreshCw size={16} aria-hidden="true" />
+                              <span>Restore</span>
+                            </button>
+                          ) : (
+                            <button
+                              className="icon-button"
+                              onClick={() =>
+                                updateScoutStrength(strength, {
+                                  status: 'hidden',
+                                })
+                              }
+                              type="button"
+                            >
+                              <Lock size={16} aria-hidden="true" />
+                              <span>Hide</span>
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
             </section>
 
             <section className="scout-panel">

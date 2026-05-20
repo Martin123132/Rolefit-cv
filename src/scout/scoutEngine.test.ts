@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildScoutMatches,
+  buildScoutStrengthSuggestions,
+  confirmedScoutStrengthEvidence,
+  normaliseScoutStrengths,
   parseScoutJobAdverts,
   type ScoutJob,
   type ScoutMatch,
   type ScoutProfile,
+  type ScoutStrength,
 } from './scoutEngine'
 
 const strongSupportProfile: ScoutProfile = {
@@ -163,5 +167,102 @@ You will manage stock control, inventory and delivery documentation.
     ])
 
     expect(matches.map((match) => match.job.id)).toEqual(['green', 'red', 'black'])
+  })
+})
+
+describe('Scout strengths bank', () => {
+  it('suggests strengths from realistic profile proof', () => {
+    const suggestions = buildScoutStrengthSuggestions(strongSupportProfile)
+
+    expect(suggestions.map((strength) => strength.label)).toEqual(
+      expect.arrayContaining(['customer service', 'communication', 'crm', 'documentation', 'training']),
+    )
+    expect(suggestions.every((strength) => strength.status === 'suggested')).toBe(true)
+    expect(suggestions.find((strength) => strength.label === 'crm')?.proof).toContain('CRM')
+  })
+
+  it('uses confirmed strengths as extra matching evidence', () => {
+    const baseProfile: ScoutProfile = {
+      ...strongSupportProfile,
+      cvText: 'Customer service specialist with calm communication and support experience.',
+      confirmedStrengthsText: '',
+      qualifications: '',
+      selfDescription: '',
+    }
+    const excelJob = `
+Reporting Assistant
+Salary GBP 28000 per year. Hybrid work.
+Must have Excel and reporting experience.
+You will prepare data, documentation and stakeholder updates.
+`
+    const withoutStrength = matchFor(excelJob, baseProfile)
+    const withStrength = matchFor(excelJob, {
+      ...baseProfile,
+      confirmedStrengthsText: 'excel: Built weekly Excel reporting packs using customer data for managers.',
+    })
+
+    expect(withoutStrength.status).toBe('red')
+    expect(withoutStrength.missingTerms).toEqual(expect.arrayContaining(['excel', 'reporting']))
+    expect(withStrength.status).not.toBe('red')
+    expect(withStrength.evidenceTerms).toEqual(expect.arrayContaining(['excel', 'reporting']))
+  })
+
+  it('keeps hidden and unconfirmed strengths out of matching evidence', () => {
+    const strengths: ScoutStrength[] = [
+      {
+        id: 'suggested-excel',
+        label: 'excel',
+        proof: 'Built weekly Excel reporting packs.',
+        source: 'CV proof',
+        status: 'suggested',
+        updatedAt: '',
+      },
+      {
+        id: 'hidden-reporting',
+        label: 'reporting',
+        proof: 'Created manager reporting packs.',
+        source: 'CV proof',
+        status: 'hidden',
+        updatedAt: '',
+      },
+      {
+        id: 'confirmed-crm',
+        label: 'crm',
+        proof: 'Kept CRM notes current for customer issues.',
+        source: 'CV proof',
+        status: 'confirmed',
+        updatedAt: '',
+      },
+    ]
+
+    const evidence = confirmedScoutStrengthEvidence(strengths)
+
+    expect(evidence).toContain('crm')
+    expect(evidence).not.toContain('Excel')
+    expect(evidence).not.toContain('reporting')
+  })
+
+  it('defaults older saved drafts without strengths to an empty bank', () => {
+    expect(normaliseScoutStrengths(undefined)).toEqual([])
+    expect(normaliseScoutStrengths({})).toEqual([])
+    expect(
+      normaliseScoutStrengths([
+        {
+          id: 'saved-strength',
+          label: 'support',
+          proof: 'Supported customers through delayed orders.',
+          status: 'confirmed',
+        },
+      ]),
+    ).toEqual([
+      {
+        id: 'saved-strength',
+        label: 'support',
+        proof: 'Supported customers through delayed orders.',
+        source: 'Strengths bank',
+        status: 'confirmed',
+        updatedAt: '',
+      },
+    ])
   })
 })

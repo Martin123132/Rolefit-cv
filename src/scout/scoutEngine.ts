@@ -12,6 +12,7 @@ export type ParsedScoutJob = {
 }
 
 export type ScoutProfile = {
+  confirmedStrengthsText?: string
   cvText: string
   location: string
   preferredRoles: string
@@ -25,6 +26,16 @@ export type ScoutProfile = {
 
 export type ScoutMatchStatus = 'green' | 'amber' | 'red' | 'black'
 export type ScoutSignalStatus = ScoutMatchStatus
+export type ScoutStrengthStatus = 'suggested' | 'confirmed' | 'hidden'
+
+export type ScoutStrength = {
+  id: string
+  label: string
+  proof: string
+  source: string
+  status: ScoutStrengthStatus
+  updatedAt: string
+}
 
 export type ScoutRequirementCategory = 'mandatory' | 'preferred' | 'responsibility'
 
@@ -204,6 +215,14 @@ function normalise(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+function hashText(text: string) {
+  let hash = 0
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) >>> 0
+  }
+  return hash.toString(36)
+}
+
 function escapeRegex(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -240,6 +259,10 @@ function extractKnownTerms(text: string) {
     ...roleTerms.filter((term) => termMatches(text, term)),
     ...credentialTerms.filter((term) => termMatches(text, term)),
   ])
+}
+
+function strengthIdFor(label: string, proof: string) {
+  return `strength-${normalise(label).replace(/\s+/g, '-')}-${hashText(normalise(proof)).slice(0, 8)}`
 }
 
 function splitSentences(text: string) {
@@ -281,6 +304,7 @@ function profileText(profile: ScoutProfile) {
     profile.cvText,
     profile.selfDescription,
     profile.qualifications,
+    profile.confirmedStrengthsText ?? '',
     profile.preferredRoles,
     profile.location,
   ].join('\n')
@@ -307,6 +331,74 @@ function sentenceForTerm(text: string, term: string) {
   }
 
   return ''
+}
+
+export function buildScoutStrengthSuggestions(profile: ScoutProfile): ScoutStrength[] {
+  const sources = [
+    { label: 'CV proof', text: profile.cvText },
+    { label: 'Self-description', text: profile.selfDescription },
+    { label: 'Qualifications', text: profile.qualifications },
+  ]
+  const suggestions: ScoutStrength[] = []
+  const seenLabels = new Set<string>()
+
+  sources.forEach((source) => {
+    extractKnownTerms(source.text).forEach((term) => {
+      const key = normalise(term)
+      if (seenLabels.has(key)) return
+
+      const proof = sentenceForTerm(source.text, term) || source.text.trim().split(/\n/).find(Boolean) || term
+      seenLabels.add(key)
+      suggestions.push({
+        id: strengthIdFor(term, proof),
+        label: term,
+        proof,
+        source: source.label,
+        status: 'suggested',
+        updatedAt: '',
+      })
+    })
+  })
+
+  return suggestions.slice(0, 12)
+}
+
+export function normaliseScoutStrengths(value: unknown): ScoutStrength[] {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((item): ScoutStrength[] => {
+    if (!item || typeof item !== 'object') return []
+
+    const candidate = item as Partial<ScoutStrength>
+    const label = typeof candidate.label === 'string' ? candidate.label.trim() : ''
+    const proof = typeof candidate.proof === 'string' ? candidate.proof.trim() : ''
+    const source = typeof candidate.source === 'string' ? candidate.source.trim() : ''
+    const status = candidate.status
+
+    if (!label || !proof) return []
+    if (status !== 'suggested' && status !== 'confirmed' && status !== 'hidden') return []
+
+    return [
+      {
+        id:
+          typeof candidate.id === 'string' && candidate.id.trim()
+            ? candidate.id.trim()
+            : strengthIdFor(label, proof),
+        label,
+        proof,
+        source: source || 'Strengths bank',
+        status,
+        updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : '',
+      },
+    ]
+  })
+}
+
+export function confirmedScoutStrengthEvidence(strengths: readonly ScoutStrength[]) {
+  return strengths
+    .filter((strength) => strength.status === 'confirmed' && strength.label.trim() && strength.proof.trim())
+    .map((strength) => `${strength.label.trim()}: ${strength.proof.trim()}`)
+    .join('\n')
 }
 
 type JobSignals = {
