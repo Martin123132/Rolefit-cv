@@ -128,6 +128,7 @@ If that port is busy, the launcher chooses another free local port and prints th
 ## Development Checks
 
 ```bash
+npm test
 npm run lint
 npm run build
 ```
