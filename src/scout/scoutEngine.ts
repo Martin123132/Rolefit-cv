@@ -7,6 +7,7 @@ export type ScoutJob = {
 }
 
 export type ParsedScoutJob = {
+  sourceUrl?: string
   text: string
   title: string
 }
@@ -297,6 +298,35 @@ export function parseScoutJobAdverts(input: string): ParsedScoutJob[] {
       text: chunk,
       title: titleForJob(chunk),
     }))
+}
+
+export function scoutJobFingerprint(text: string) {
+  return hashText(normalise(text))
+}
+
+export function dedupeScoutJobAdverts(
+  incomingJobs: readonly ParsedScoutJob[],
+  existingJobs: readonly Pick<ScoutJob, 'text'>[],
+) {
+  const seenFingerprints = new Set(existingJobs.map((job) => scoutJobFingerprint(job.text)).filter(Boolean))
+  const uniqueJobs: ParsedScoutJob[] = []
+  const duplicateJobs: ParsedScoutJob[] = []
+
+  incomingJobs.forEach((job) => {
+    const fingerprint = scoutJobFingerprint(job.text)
+    if (!fingerprint || seenFingerprints.has(fingerprint)) {
+      duplicateJobs.push(job)
+      return
+    }
+
+    seenFingerprints.add(fingerprint)
+    uniqueJobs.push(job)
+  })
+
+  return {
+    duplicateJobs,
+    uniqueJobs,
+  }
 }
 
 function profileText(profile: ScoutProfile) {

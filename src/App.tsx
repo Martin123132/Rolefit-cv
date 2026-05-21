@@ -41,8 +41,10 @@ import {
   buildScoutMatches,
   buildScoutStrengthSuggestions,
   confirmedScoutStrengthEvidence,
+  dedupeScoutJobAdverts,
   normaliseScoutStrengths,
   parseScoutJobAdverts,
+  type ParsedScoutJob,
   type ScoutJob,
   type ScoutMatchStatus,
   type ScoutProfile,
@@ -2319,12 +2321,24 @@ function App() {
     setScoutStrengths((current) => [newStrength, ...current])
   }
 
-  function addScoutJobsToBasket(
-    jobs: Array<{ sourceUrl?: string; text: string; title: string }>,
-    message: string,
-  ) {
+  function scoutDuplicateMessage(skippedCount: number) {
+    return `${skippedCount} duplicate advert${skippedCount === 1 ? '' : 's'} skipped so the basket stays clean.`
+  }
+
+  function addScoutJobsToBasket(jobs: ParsedScoutJob[], messageForAdded: (addedCount: number) => string) {
+    const { duplicateJobs, uniqueJobs } = dedupeScoutJobAdverts(jobs, scoutJobs)
+    const skippedCount = duplicateJobs.length
+
+    if (uniqueJobs.length === 0) {
+      setScoutLastAction(skippedCount > 0 ? scoutDuplicateMessage(skippedCount) : 'No readable job adverts found.')
+      return {
+        addedCount: 0,
+        skippedCount,
+      }
+    }
+
     const createdAt = Date.now()
-    const nextJobs = jobs.map((job, index) => ({
+    const nextJobs = uniqueJobs.map((job, index) => ({
       text: job.text,
       title: job.title,
       id: `scout-${createdAt}-${index}`,
@@ -2337,13 +2351,18 @@ function App() {
       nextJobs.forEach((job, index) => {
         nextTracker[job.id] = createScoutTrackerEntryForJob({
           createdAt: updatedAt,
-          sourceUrl: jobs[index].sourceUrl ?? '',
+          sourceUrl: uniqueJobs[index].sourceUrl ?? '',
           title: job.title,
         })
       })
       return nextTracker
     })
-    setScoutLastAction(message)
+    const message = messageForAdded(nextJobs.length)
+    setScoutLastAction(skippedCount > 0 ? `${message} ${scoutDuplicateMessage(skippedCount)}` : message)
+    return {
+      addedCount: nextJobs.length,
+      skippedCount,
+    }
   }
 
   function addScoutJobsFromInput() {
@@ -2354,11 +2373,13 @@ function App() {
       return
     }
 
-    addScoutJobsToBasket(
+    const result = addScoutJobsToBasket(
       parsedJobs,
-      `${parsedJobs.length} job advert${parsedJobs.length === 1 ? '' : 's'} added to the basket.`,
+      (addedCount) => `${addedCount} job advert${addedCount === 1 ? '' : 's'} added to the basket.`,
     )
-    setScoutJobInput('')
+    if (result.addedCount > 0) {
+      setScoutJobInput('')
+    }
   }
 
   async function importScoutJobUrl() {
@@ -2429,7 +2450,7 @@ function App() {
       return
     }
 
-    addScoutJobsToBasket(
+    const result = addScoutJobsToBasket(
       [
         {
           sourceUrl: scoutUrlPreview.sourceUrl,
@@ -2437,8 +2458,17 @@ function App() {
           title,
         },
       ],
-      `${title} added to the basket from URL import.`,
+      () => `${title} added to the basket from URL import.`,
     )
+
+    if (result.addedCount === 0) {
+      setScoutUrlStatus({
+        message: `${title} is already in the basket. No duplicate was added.`,
+        state: 'warning',
+      })
+      return
+    }
+
     setScoutUrlInput('')
     setScoutUrlPreview(null)
     setScoutUrlStatus({

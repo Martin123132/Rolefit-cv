@@ -4,8 +4,10 @@ import {
   buildScoutMatches,
   buildScoutStrengthSuggestions,
   confirmedScoutStrengthEvidence,
+  dedupeScoutJobAdverts,
   normaliseScoutStrengths,
   parseScoutJobAdverts,
+  scoutJobFingerprint,
   type ScoutJob,
   type ScoutMatch,
   type ScoutProfile,
@@ -60,6 +62,48 @@ Must have forklift licence. Salary GBP 26000 per year.
     expect(parsed.map((job) => job.title)).toEqual(['Customer Support Advisor', 'Warehouse Operative'])
     expect(parsed[0].text).toContain('Required customer service')
     expect(parsed[1].text).toContain('forklift licence')
+  })
+})
+
+describe('dedupeScoutJobAdverts', () => {
+  it('uses a stable fingerprint for whitespace and punctuation changes', () => {
+    expect(scoutJobFingerprint('Customer Support Advisor!\nRequired: CRM.')).toBe(
+      scoutJobFingerprint('customer support advisor required crm'),
+    )
+  })
+
+  it('skips adverts already in the basket and duplicates pasted together', () => {
+    const existingJobs: ScoutJob[] = [
+      {
+        id: 'job-1',
+        text: 'Customer Support Advisor. Required customer service and CRM. Salary GBP 28000 per year.',
+        title: 'Customer Support Advisor',
+      },
+    ]
+
+    const result = dedupeScoutJobAdverts(
+      [
+        {
+          text: 'Customer Support Advisor. Required customer service and CRM. Salary GBP 28000 per year.',
+          title: 'Customer Support Advisor copy',
+        },
+        {
+          text: 'Reporting Assistant. Required reporting and Excel. Salary GBP 27000 per year.',
+          title: 'Reporting Assistant',
+        },
+        {
+          text: 'Reporting Assistant. Required reporting and Excel. Salary GBP 27000 per year.',
+          title: 'Reporting Assistant duplicate',
+        },
+      ],
+      existingJobs,
+    )
+
+    expect(result.uniqueJobs.map((job) => job.title)).toEqual(['Reporting Assistant'])
+    expect(result.duplicateJobs.map((job) => job.title)).toEqual([
+      'Customer Support Advisor copy',
+      'Reporting Assistant duplicate',
+    ])
   })
 })
 

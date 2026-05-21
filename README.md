@@ -43,6 +43,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Scout Mode for building a local candidate profile and job basket.
 - Editable Scout strengths bank with local suggestions, confirmed proof cards, hidden cards, and manual strengths.
 - Best-effort Scout job URL import with review-before-add and paste fallback for blocked sites.
+- Local Scout duplicate detection so pasted or imported adverts do not clutter the basket.
 - Honest job shortlist with green, amber, red, and black suitability.
 - Structured Scout reasons for mandatory proof, responsibilities, preferred extras, pay checks, work pattern, and warnings.
 - Scout warnings for missing mandatory proof, refused role types, unclear pay, agency-style listings, umbrella payroll, zero-hours terms, commission-only terms, and other bad-condition signals.
@@ -148,7 +149,7 @@ npm run build
 
 - Scanned or image-only PDFs are not OCR processed yet.
 - Scout URL import is best-effort. Some job sites block it, and the user should paste the advert text instead.
-- Scout Mode only ranks jobs the user imports or pastes in. Live job search and deduplication are planned separately.
+- Scout Mode only ranks jobs the user imports or pastes in. It deduplicates local basket entries, but live job search is planned separately.
 - Scout matching is a local first-pass signal, not a legal, financial, or employment guarantee.
 - Scout follow-up dates are in-app lights only and do not include OS/browser notifications, accounts, or sync yet.
 - Live provider support is still early and needs prompt-quality evaluation before wider use.
@@ -162,7 +163,7 @@ Planned next slices:
 - Improve Scout matching with more real-world advert examples and user feedback.
 - Improve tracker history and optional reminders.
 - OCR support for scanned PDFs.
-- Better job URL extraction and deduplication.
+- Better job URL extraction and saved-source review.
 - Full all-provider comparison once per-provider session keys are available.
 - More interview modes, including follow-up questions.
 - Better long-term tracker review and optional reminders.
