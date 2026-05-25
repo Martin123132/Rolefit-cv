@@ -53,6 +53,17 @@ import {
   type ScoutWorkPreference,
 } from './scout/scoutEngine'
 import {
+  clearScoutMatchFeedback,
+  readSavedScoutMatchFeedback,
+  saveScoutMatchFeedback,
+  scoutMatchFeedbackLabels,
+  scoutMatchFeedbackLight,
+  scoutMatchFeedbackOptions,
+  scoutMatchFeedbackSummary,
+  type ScoutMatchFeedbackRating,
+  type ScoutMatchFeedbackState,
+} from './scout/scoutFeedback'
+import {
   appendScoutTrackerHistory,
   compareScoutTrackerEntries,
   createScoutTrackerEntryForJob,
@@ -153,6 +164,7 @@ type SavedDraft = {
   scoutDescription: string
   scoutJobs: ScoutJob[]
   scoutLocation: string
+  scoutMatchFeedback: ScoutMatchFeedbackState
   scoutPreferredRoles: string
   scoutQualifications: string
   scoutRefusedRoles: string
@@ -506,6 +518,7 @@ function loadSavedDraft(): Partial<SavedDraft> {
       scoutDescription: typeof parsed.scoutDescription === 'string' ? parsed.scoutDescription : undefined,
       scoutJobs: readSavedScoutJobs(parsed.scoutJobs),
       scoutLocation: typeof parsed.scoutLocation === 'string' ? parsed.scoutLocation : undefined,
+      scoutMatchFeedback: readSavedScoutMatchFeedback(parsed.scoutMatchFeedback),
       scoutPreferredRoles: typeof parsed.scoutPreferredRoles === 'string' ? parsed.scoutPreferredRoles : undefined,
       scoutQualifications: typeof parsed.scoutQualifications === 'string' ? parsed.scoutQualifications : undefined,
       scoutRefusedRoles: typeof parsed.scoutRefusedRoles === 'string' ? parsed.scoutRefusedRoles : undefined,
@@ -1350,6 +1363,7 @@ function App() {
   const [scoutStrengths, setScoutStrengths] = useState<ScoutStrength[]>(savedDraft.scoutStrengths ?? [])
   const [scoutJobs, setScoutJobs] = useState<ScoutJob[]>(savedDraft.scoutJobs ?? [])
   const [scoutTracker, setScoutTracker] = useState<ScoutTrackerState>(savedDraft.scoutTracker ?? {})
+  const [scoutMatchFeedback, setScoutMatchFeedback] = useState<ScoutMatchFeedbackState>(savedDraft.scoutMatchFeedback ?? {})
   const [scoutTrackerFilter, setScoutTrackerFilter] = useState<ScoutTrackerFilter>('active')
   const [scoutHistoryNotes, setScoutHistoryNotes] = useState<Record<string, string>>({})
   const [expandedScoutHistory, setExpandedScoutHistory] = useState<Record<string, boolean>>({})
@@ -1488,6 +1502,10 @@ function App() {
       interview: scoutTrackerCounts.interview,
     }),
     [scoutJobs, scoutToday, scoutTracker, scoutTrackerCounts],
+  )
+  const scoutFeedbackSummary = useMemo(
+    () => scoutMatchFeedbackSummary(scoutMatchFeedback, scoutJobs.map((job) => job.id)),
+    [scoutJobs, scoutMatchFeedback],
   )
   const scoutProfileHasDetails =
     scoutDescription.trim().length > 0 ||
@@ -1830,6 +1848,7 @@ function App() {
       scoutDescription,
       scoutJobs,
       scoutLocation,
+      scoutMatchFeedback,
       scoutPreferredRoles,
       scoutQualifications,
       scoutRefusedRoles,
@@ -1852,6 +1871,7 @@ function App() {
     scoutDescription,
     scoutJobs,
     scoutLocation,
+    scoutMatchFeedback,
     scoutPreferredRoles,
     scoutQualifications,
     scoutRefusedRoles,
@@ -2288,6 +2308,26 @@ function App() {
     }))
   }
 
+  function updateScoutMatchFeedbackRating(jobId: string, rating: ScoutMatchFeedbackRating) {
+    setScoutMatchFeedback((current) => saveScoutMatchFeedback(current, jobId, { rating }))
+  }
+
+  function updateScoutMatchFeedbackNote(jobId: string, note: string) {
+    setScoutMatchFeedback((current) => {
+      const feedback = current[jobId]
+      if (!feedback) return current
+
+      return saveScoutMatchFeedback(current, jobId, {
+        note,
+        rating: feedback.rating,
+      })
+    })
+  }
+
+  function removeScoutMatchFeedback(jobId: string) {
+    setScoutMatchFeedback((current) => clearScoutMatchFeedback(current, jobId))
+  }
+
   function updateScoutStrength(
     strength: ScoutStrength,
     updates: Partial<Omit<ScoutStrength, 'id' | 'updatedAt'>>,
@@ -2484,12 +2524,14 @@ function App() {
       delete nextTracker[jobId]
       return nextTracker
     })
+    removeScoutMatchFeedback(jobId)
     setScoutLastAction('Job removed from the basket.')
   }
 
   function clearScoutJobs() {
     setScoutJobs([])
     setScoutTracker({})
+    setScoutMatchFeedback({})
     setScoutLastAction('Job basket cleared.')
   }
 
@@ -2577,8 +2619,8 @@ function App() {
     const today = localDateValue()
     const didDownload =
       format === 'md'
-        ? downloadTextFile('rolefit-scout-tracker.md', scoutTrackerMarkdown(scoutMatches, scoutTracker, today), 'text/markdown')
-        : downloadTextFile('rolefit-scout-tracker.csv', scoutTrackerCsv(scoutMatches, scoutTracker, today), 'text/csv')
+        ? downloadTextFile('rolefit-scout-tracker.md', scoutTrackerMarkdown(scoutMatches, scoutTracker, today, scoutMatchFeedback), 'text/markdown')
+        : downloadTextFile('rolefit-scout-tracker.csv', scoutTrackerCsv(scoutMatches, scoutTracker, today, scoutMatchFeedback), 'text/csv')
 
     setDownloaded(didDownload ? `scout-${format}` : `scout-${format}-error`)
     window.setTimeout(() => setDownloaded(null), 1400)
@@ -3186,6 +3228,16 @@ function App() {
                       </div>
                     ))}
                   </div>
+                  <div className="scout-feedback-summary" aria-label="Match feedback summary">
+                    <div className="scout-tracker-count">
+                      <span>Reviewed</span>
+                      <strong>{scoutFeedbackSummary.reviewedCount}</strong>
+                    </div>
+                    <div className="scout-tracker-count">
+                      <span>Issues</span>
+                      <strong>{scoutFeedbackSummary.issueCount}</strong>
+                    </div>
+                  </div>
                   <div className="scout-filter-row" role="group" aria-label="Tracker filters">
                     {scoutTrackerFilters.map((filter) => (
                       <button
@@ -3241,6 +3293,7 @@ function App() {
                   {scoutTrackedMatches.map(({ match, tracker }) => {
                     const light = scoutLightFor(match.status)
                     const dueState = scoutTrackerDueState(tracker, scoutToday)
+                    const matchFeedback = scoutMatchFeedback[match.job.id]
                     const historyExpanded = Boolean(expandedScoutHistory[match.job.id])
                     const visibleHistory = historyExpanded ? tracker.history : tracker.history.slice(0, 5)
                     const hiddenHistoryCount = Math.max(0, tracker.history.length - visibleHistory.length)
@@ -3321,6 +3374,45 @@ function App() {
                               </div>
                             </section>
                           ))}
+                        </div>
+                        <div className={`scout-feedback-card ${matchFeedback?.rating ?? 'unreviewed'}`} aria-label={`${match.job.title} match feedback`}>
+                          <div className="scout-feedback-head">
+                            <span className={`status-light ${scoutMatchFeedbackLight(matchFeedback)}`} aria-hidden="true"></span>
+                            <div>
+                              <span className="section-kicker">Match feedback</span>
+                              <strong>{matchFeedback ? scoutMatchFeedbackLabels[matchFeedback.rating] : 'Not reviewed'}</strong>
+                            </div>
+                            {matchFeedback && (
+                              <button className="icon-button" onClick={() => removeScoutMatchFeedback(match.job.id)} type="button">
+                                <Trash2 size={15} aria-hidden="true" />
+                                <span>Clear feedback</span>
+                              </button>
+                            )}
+                          </div>
+                          <div className="scout-feedback-options" role="group" aria-label={`${match.job.title} feedback rating`}>
+                            {scoutMatchFeedbackOptions.map((option) => (
+                              <button
+                                aria-pressed={matchFeedback?.rating === option.id}
+                                className={`scout-filter-button ${matchFeedback?.rating === option.id ? 'active' : ''}`}
+                                key={option.id}
+                                onClick={() => updateScoutMatchFeedbackRating(match.job.id, option.id)}
+                                type="button"
+                              >
+                                <span>{option.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                          <label className="scout-feedback-note">
+                            <span>Feedback note</span>
+                            <textarea
+                              aria-label={`${match.job.title} feedback note`}
+                              disabled={!matchFeedback}
+                              onChange={(event) => updateScoutMatchFeedbackNote(match.job.id, event.target.value)}
+                              placeholder={matchFeedback ? 'What should Scout learn from this?' : 'Choose a feedback option first'}
+                              value={matchFeedback?.note ?? ''}
+                            />
+                          </label>
+                          <p>{matchFeedback ? 'Recorded for calibration. Ranking unchanged.' : 'Review this score after checking the reasons.'}</p>
                         </div>
                         <div className="scout-tracker-card" aria-label={`${match.job.title} application tracker`}>
                           <div className="scout-tracker-head">

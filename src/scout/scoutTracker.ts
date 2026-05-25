@@ -1,4 +1,8 @@
 import type { ScoutMatch } from './scoutEngine'
+import {
+  scoutMatchFeedbackLabels,
+  type ScoutMatchFeedbackState,
+} from './scoutFeedback'
 
 export type ScoutTrackerStatus = 'saved' | 'interested' | 'applied' | 'interview' | 'offer' | 'rejected' | 'archived'
 
@@ -334,15 +338,24 @@ function historyExportText(history: readonly ScoutTrackerHistoryItem[]) {
     .join(' | ')
 }
 
-function trackerExportRows(matches: readonly ScoutMatch[], trackerState: ScoutTrackerState, today: string) {
+function trackerExportRows(
+  matches: readonly ScoutMatch[],
+  trackerState: ScoutTrackerState,
+  today: string,
+  feedbackState: ScoutMatchFeedbackState = {},
+) {
   return matches.map((match) => {
     const tracker = trackerState[match.job.id] ?? defaultScoutTrackerEntry()
     const dueState = scoutTrackerDueState(tracker, today)
+    const feedback = feedbackState[match.job.id]
 
     return {
       contact: tracker.contact.trim(),
       dueState,
       employer: tracker.employer.trim(),
+      feedbackNote: feedback?.note.trim() ?? '',
+      feedbackRating: feedback ? scoutMatchFeedbackLabels[feedback.rating] : 'Not reviewed',
+      feedbackUpdatedAt: feedback?.updatedAt ?? '',
       followUpDate: tracker.followUpDate.trim(),
       gaps: match.missingTerms.join('; '),
       history: historyExportText(tracker.history),
@@ -358,8 +371,13 @@ function trackerExportRows(matches: readonly ScoutMatch[], trackerState: ScoutTr
   })
 }
 
-export function scoutTrackerMarkdown(matches: readonly ScoutMatch[], trackerState: ScoutTrackerState, today: string) {
-  const rows = trackerExportRows(matches, trackerState, today)
+export function scoutTrackerMarkdown(
+  matches: readonly ScoutMatch[],
+  trackerState: ScoutTrackerState,
+  today: string,
+  feedbackState: ScoutMatchFeedbackState = {},
+) {
+  const rows = trackerExportRows(matches, trackerState, today, feedbackState)
 
   return [
     '# Rolefit Scout Tracker',
@@ -378,6 +396,9 @@ export function scoutTrackerMarkdown(matches: readonly ScoutMatch[], trackerStat
       `- Source URL: ${row.sourceUrl || 'Not set'}`,
       `- Next action: ${row.nextAction || 'Not set'}`,
       `- Match: ${row.matchStatus} (${row.matchScore})`,
+      `- Match feedback: ${row.feedbackRating}`,
+      `- Feedback updated: ${row.feedbackUpdatedAt || 'Not reviewed'}`,
+      `- Feedback note: ${row.feedbackNote || 'None'}`,
       `- Warnings: ${row.warnings || 'None'}`,
       `- Gaps: ${row.gaps || 'None'}`,
       `- History: ${row.history || 'None'}`,
@@ -388,7 +409,12 @@ export function scoutTrackerMarkdown(matches: readonly ScoutMatch[], trackerStat
   ].join('\n')
 }
 
-export function scoutTrackerCsv(matches: readonly ScoutMatch[], trackerState: ScoutTrackerState, today: string) {
+export function scoutTrackerCsv(
+  matches: readonly ScoutMatch[],
+  trackerState: ScoutTrackerState,
+  today: string,
+  feedbackState: ScoutMatchFeedbackState = {},
+) {
   const headers = [
     'Title',
     'Status',
@@ -401,11 +427,14 @@ export function scoutTrackerCsv(matches: readonly ScoutMatch[], trackerState: Sc
     'Notes',
     'Match score',
     'Match status',
+    'Match feedback',
+    'Feedback note',
+    'Feedback updated',
     'Warnings',
     'Gaps',
     'History',
   ]
-  const rows = trackerExportRows(matches, trackerState, today).map((row) => [
+  const rows = trackerExportRows(matches, trackerState, today, feedbackState).map((row) => [
     row.title,
     row.status,
     scoutTrackerDueLabels[row.dueState],
@@ -417,6 +446,9 @@ export function scoutTrackerCsv(matches: readonly ScoutMatch[], trackerState: Sc
     row.notes,
     row.matchScore,
     row.matchStatus,
+    row.feedbackRating,
+    row.feedbackNote,
+    row.feedbackUpdatedAt,
     row.warnings,
     row.gaps,
     row.history,

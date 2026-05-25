@@ -44,6 +44,7 @@ The app uses a traffic-light workflow so the interface teaches the process:
 - Editable Scout strengths bank with local suggestions, confirmed proof cards, hidden cards, and manual strengths.
 - Best-effort Scout job URL import with review-before-add and paste fallback for blocked sites.
 - Local Scout duplicate detection so pasted or imported adverts do not clutter the basket.
+- Local Scout match feedback so users can mark whether a ranking feels right, too generous, too harsh, or missed a warning.
 - Honest job shortlist with green, amber, red, and black suitability.
 - Structured Scout reasons for mandatory proof, responsibilities, preferred extras, pay checks, work pattern, and warnings.
 - Scout warnings for missing mandatory proof, refused role types, unclear pay, agency-style listings, umbrella payroll, zero-hours terms, commission-only terms, and other bad-condition signals.
@@ -94,6 +95,7 @@ The comparison mode runs the selected provider against the local mock baseline a
 - DOCX/PDF imports extract plain text into the editor; the user still chooses when to run analysis.
 - Scout jobs, strengths, tracker notes, timeline history, follow-up dates, contact/source fields, profile notes, and preferences stay in local draft storage on the user's machine.
 - Scout only uses confirmed strength cards as extra matching evidence; suggested and hidden cards stay out of ranking.
+- Scout match feedback is saved locally for calibration and export only; it does not change ranking yet.
 - Scout tracker exports are local browser downloads.
 - Scout URL import extracts readable text through the local app server and stores only the reviewed advert text and optional source URL.
 - Scout does not search job boards, scrape batches, contact employers, or auto-apply.
@@ -161,7 +163,7 @@ npm run build
 Planned next slices:
 
 - Improve Scout matching with more real-world advert examples and user feedback.
-- Improve tracker history and optional reminders.
+- Use saved Scout feedback to guide future scoring improvements.
 - OCR support for scanned PDFs.
 - Better job URL extraction and saved-source review.
 - Full all-provider comparison once per-provider session keys are available.

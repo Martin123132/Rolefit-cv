@@ -120,4 +120,26 @@ describe('Scout tracker history', () => {
     expect(scoutTrackerCsv([match], tracker, '2026-05-20')).toContain('History')
     expect(scoutTrackerCsv([match], tracker, '2026-05-20')).toContain('Applied with tailored CV.')
   })
+
+  it('includes match feedback in Markdown and CSV exports', () => {
+    const tracker: ScoutTrackerState = {
+      'job-1': createScoutTrackerEntryForJob({
+        createdAt: fixtureCreatedAt,
+        title: 'Customer Support Advisor',
+      }),
+    }
+    const feedback = {
+      'job-1': {
+        note: 'The score feels too high because the advert needs CRM proof.',
+        rating: 'too-high' as const,
+        updatedAt: '2026-05-20T13:00:00.000Z',
+      },
+    }
+    const match = fixtureMatch()
+
+    expect(scoutTrackerMarkdown([match], tracker, '2026-05-20', feedback)).toContain('Match feedback: Too generous')
+    expect(scoutTrackerMarkdown([match], tracker, '2026-05-20', feedback)).toContain('Feedback note: The score feels too high')
+    expect(scoutTrackerCsv([match], tracker, '2026-05-20', feedback)).toContain('Match feedback')
+    expect(scoutTrackerCsv([match], tracker, '2026-05-20', feedback)).toContain('Too generous')
+  })
 })
